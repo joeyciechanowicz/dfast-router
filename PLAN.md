@@ -331,13 +331,13 @@ Idle runs alone span 47–51ns, and the gates have margins of about 5%, so a num
 
 **At most 6 agents run at once.** That matches the performance cores. A process that loads the corpus peaks at about 800MB, so memory isn't the limit.
 
-**A fresh worktree is not usable as it stands.** `node_modules`, `dist/`, and `bench/routes-specific*` are git-ignored, and uncommitted files aren't there either. `scripts/setup-worktree.sh` fixes this. Without WP-0's `.gitignore` change, a symlinked `node_modules` shows as untracked, and `git add -A` would commit it.
+**A fresh worktree is not usable as it stands.** The Agent tool creates it from `main`, so the plan and prototype are missing until it fast-forwards to `dfa-router`. `node_modules`, `dist/`, and `bench/routes-specific*` are git-ignored, and uncommitted files aren't there either. `scripts/setup-worktree.sh` fixes the ignored files. Without WP-0's `.gitignore` change, a symlinked `node_modules` shows as untracked, and `git add -A` would commit it.
 
 **`npm test` is off limits during parallel waves.** It matches everything under `test/`, including `test/router-consistency.test.mjs` and its 3M-URL corpus. Agents run only their own test files.
 
 ### Rules for every agent
 
-1. Work only in your worktree, and run `bash scripts/setup-worktree.sh` first.
+1. Work only in your worktree. Start with `git merge --ff-only dfa-router`, then `bash scripts/setup-worktree.sh`.
 2. Edit only the files your package owns. New test files in your owned paths are fine.
 3. Do not edit `src/compiler/types.ts`, `src/types.ts`, or `prototype/`, unless your package says so.
 4. Do not edit a stub another package owns, even to make something compile. If you need it, follow [Changing a contract](#changing-a-contract).
@@ -349,13 +349,14 @@ Idle runs alone span 47–51ns, and the gates have margins of about 5%, so a num
 
 ### Agent prompt template
 
-Start each agent with `subagent_type: "general-purpose"` and `isolation: "worktree"`, from the `dfa-router` branch. Agents start with no context, so the prompt has to carry everything:
+Start each agent with `subagent_type: "general-purpose"` and `isolation: "worktree"`. These worktrees start from `main`, not the current branch, so the prompt's first step fast-forwards to `dfa-router`. Agents start with no context, so the prompt has to carry everything:
 
 ```
 You are implementing {WP} of the balancing-router DFA plan, in your own git worktree.
 Other agents may be working at the same time on other files.
 
-1. Run `bash scripts/setup-worktree.sh`, and stop if it fails.
+1. Run `git merge --ff-only dfa-router`, then `bash scripts/setup-worktree.sh`.
+   Stop if either fails.
 2. Read AGENTS.md, then these PLAN.md sections: Decisions, Behaviour contract,
    Architecture, Shared contracts, Rules for every agent, and {WP}.
 3. Do {WP}. Port from prototype/ where the plan says to. Its behaviour is the
