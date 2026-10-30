@@ -60,34 +60,46 @@ function tailWidths(parts: Part[]): number[] {
   return tails;
 }
 
+/** The body of `(s, e) => params`, and the numbers it reads from `k0`, `k1`, and so on. */
+interface FastBody {
+  code: string;
+  constants: number[];
+}
+
 /**
- * The body of `(s, e) => params`, or null if some param needs a RegExp. Every boundary it uses is
+ * Builds the extractor, or returns null if some param needs a RegExp. Every boundary it uses is
  * forced: a fixed width, a fixed distance from the end, or the first `/` after a param that can't
  * hold one. So it finds the only split there is, which is the one `RegExp.exec` would find.
  */
-function fastBody(v: Variant, parts: Part[]): string | null {
+function fastBody(v: Variant, parts: Part[]): FastBody | null {
   const tails = tailWidths(parts);
+  const constants: number[] = [];
+  const constant = (value: number): string => `k${constants.push(value) - 1}`;
   const lines: string[] = [];
   const fields = new Map<string, string>(); // a repeated name keeps the last capture, as `exec` would
   let base = ''; // base + offset is the position of the `/` before the current part
   let offset = 0;
   const at = (o: number): string => {
-    if (base === '') return String(o);
-    return o === 0 ? base : `${base}+${o}`;
+    if (base === '') return constant(o);
+    return o === 0 ? base : `${base}+${constant(o)}`;
   };
 
   for (let k = 0; k < parts.length; k += 1) {
     const { name, width, crosses } = parts[k];
+    if (name === null) {
+      offset += 1 + width; // static text is never captured, and always has a fixed width
+      continue;
+    }
     const start = at(offset + 1);
     let end: string;
     if (width >= 0) end = at(offset + 1 + width);
-    else if (tails[k] >= 0) end = tails[k] === 0 ? 'e' : `e-${tails[k]}`;
+    else if (tails[k] >= 0) end = tails[k] === 0 ? 'e' : `e-${constant(tails[k])}`;
     else if (!crosses) {
       end = `p${lines.length}`;
       lines.push(`const ${end}=s.indexOf("/",${start});`);
     } else return null;
 
-    if (name !== null) fields.set(name, `s.slice(${start},${end})`);
+    fields.set(name, `s.slice(${start},${end})`);
     if (width >= 0) offset += 1 + width;
     else {
       base = end;
@@ -97,7 +109,24 @@ function fastBody(v: Variant, parts: Part[]): string | null {
 
   for (const [name, value] of Object.entries(v.defaults)) fields.set(name, JSON.stringify(value));
   const entries = [...fields].map(([name, value]) => `${JSON.stringify(name)}:${value}`);
-  return `${lines.join('')}return {${entries.join(',')}};`;
+  return { code: `${lines.join('')}return {${entries.join(',')}};`, constants };
+}
+
+/**
+ * Generated functions, by source. Routes of one shape differ only in their offsets, so they share a
+ * function and its optimized code. 3000 routes would otherwise be 3000 functions, each called too
+ * rarely for V8 to optimize.
+ */
+const factories = new Map<string, (...constants: number[]) => Extractor>();
+
+function instantiate({ code, constants }: FastBody): Extractor {
+  let factory = factories.get(code);
+  if (factory === undefined) {
+    const names = constants.map((_, i) => `k${i}`);
+    factory = new Function(...names, `"use strict";return (s,e)=>{${code}}`) as (...constants: number[]) => Extractor;
+    factories.set(code, factory);
+  }
+  return factory(...constants);
 }
 
 function regExpExtractor(v: Variant): Extractor {
@@ -130,5 +159,5 @@ export function buildExtractor(v: Variant, parse: ParseFragment): Extractor | nu
   // The empty match of `/:a(.+)/*` can overlap the wildcard's own variant. See captureRegExp.
   const overlaps = hasDefaults && parts.some((part) => part.width < 0 && part.crosses);
   const body = overlaps ? null : fastBody(v, parts);
-  return body === null ? regExpExtractor(v) : (new Function('s', 'e', body) as Extractor);
+  return body === null ? regExpExtractor(v) : instantiate(body);
 }

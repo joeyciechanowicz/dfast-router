@@ -112,13 +112,22 @@ const CASES: Record<'fixed' | 'end' | 'indexOf' | 'regexp', Case[]> = {
 };
 
 test('case 1: fixed offsets, when every width before and through the param is known', () => {
-  assert.equal(String(buildExtractor(lastVariant('/a/:id([0-9]{4})/b'), parse)).includes('s.slice(3,7)'), true);
+  assert.equal(String(buildExtractor(lastVariant('/a/:id([0-9]{4})/b'), parse)).includes('s.slice(k0,k1)'), true);
   assert.deepEqual(extractorOf(lastVariant('/a/:id([0-9]{4})/b'))('/a/1234/b', 9), { id: '1234' });
 });
 
 test('case 2: anchors from the end, when everything after the param has a known width', () => {
-  assert.equal(String(buildExtractor(lastVariant('/a/:p(.+)/edit'), parse)).includes('s.slice(3,e-5)'), true);
+  assert.equal(String(buildExtractor(lastVariant('/a/:p(.+)/edit'), parse)).includes('s.slice(k0,e-k1)'), true);
   assert.deepEqual(extractorOf(lastVariant('/a/:p(.+)/edit'))('/a/x/y/edit?q', 11), { p: 'x/y' });
+});
+
+test('routes of one shape share a function, and keep their own offsets', () => {
+  const short = extractorOf(lastVariant('/a/:id'));
+  const long = extractorOf(lastVariant('/abcdef/:id'));
+  assert.equal(String(short), String(long));
+  assert.deepEqual(short('/a/1', 4), { id: '1' });
+  assert.deepEqual(long('/abcdef/2', 9), { id: '2' });
+  assert.deepEqual(short('/a/3', 4), { id: '3' });
 });
 
 test('case 3: finds the next `/`, when the param cannot hold one', () => {
