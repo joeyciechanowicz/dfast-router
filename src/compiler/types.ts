@@ -62,6 +62,7 @@ export interface Table {
   start: number;
   stop: number;     // x >= stop leaves the hot loop
   scan: number;     // x >= scan continues in slow()
+  scanRun: number;  // chars slow() checks by hand before indexOf
   rowOf: Int32Array; // table state to accept row, or -1
 }
 
@@ -78,6 +79,7 @@ export interface Results {
 
 /**
  * Called when the DFA gives no direct result, and always for a path holding a non-ASCII
- * character. `row` is the final state's accept row, or -1 if it has none.
+ * character. `row` is the final state's accept row, or -1 if it has none. `end` is the
+ * path's end, or -1 if the DFA stopped before reaching it: `miss` finds it only if needed.
  */
 export type Miss = (path: string, method: number, end: number, row: number) => RouteMatch | null;
