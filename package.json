@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "tsx --test",
-    "test:consistency": "FULL_CORPUS=1 node test/router-consistency.test.mjs",
+    "test:consistency": "FULL_CORPUS=1 tsx test/router-consistency.test.mjs",
     "bench": "node bench/bench.mjs",
     "bench:static": "scripts/bench/run-static-bench.sh",
     "bench:compare": "node scripts/bench/compare.mjs",

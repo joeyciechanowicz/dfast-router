@@ -423,7 +423,7 @@ npx tsx --test test/reference.test.mjs
 7. Add `--read-params`, which reads `.params` on every hit.
 8. In `compare.mjs`, run each router in its own process and print each router's ratio to medley.
 9. Add a `createRouter` adapter to `prototype/shim-dfa.cjs`, so that the prototype can run in the `balancing-router` slot. G2 compares against it in the same session.
-10. In `package.json`, remove `bench:gate` and `bench:matrix`, whose files no longer exist. Change `test:consistency` to `FULL_CORPUS=1 node test/router-consistency.test.mjs`.
+10. In `package.json`, remove `bench:gate` and `bench:matrix`, whose files no longer exist. Change `test:consistency` to `FULL_CORPUS=1 tsx test/router-consistency.test.mjs`.
 11. Remove `createAutomatonRouter` and `buildBalancingRouterV2` from the bench.
 
 **Done when:** these all run without errors. Check behaviour only, because speed is judged at G1:
@@ -554,7 +554,7 @@ Write these from the [Behaviour contract](#behaviour-contract), not from any imp
 
 ```bash
 npm run build
-DIFF_TARGET=prototype FULL_CORPUS=1 node test/router-consistency.test.mjs   # bench route sets: 0 mismatches
+DIFF_TARGET=prototype npm run test:consistency   # bench route sets: 0 mismatches
 ```
 
 Registration order and required ranking never disagree on the two bench route sets, so the prototype should pass there with no false alarms. It's expected to fail on `routes-overlap`, which is also proof that the fixture works. `test/router.test.ts` stays red until WP-8.
