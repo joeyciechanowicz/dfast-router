@@ -1,232 +1,108 @@
-# How It Works (balancing-router-v2 / AutomatonRouter)
+# How it works
 
-This document explains the high-level design of the v2 router implemented in `src/automaton-router.ts`.
-
-The key idea is:
-
-- **Build phase:** Convert route patterns into a **per-method deterministic-ish automaton** (states + edges) plus an optional regex fallback list.
-- **Match phase:** Normalize input, **scan path segments once**, then walk the automaton to find the first acceptable route, producing params only when needed.
-- **Caching:** A large **GET path cache** plus a bounded ring-buffer eviction shared across methods.
-
-## Public API Surface
-
-- `router.on(method, path, handler, store?)`
-  - Adds a route definition; compilation is deferred until first lookup.
-  - `path` can be a string pattern or a `RegExp`.
-- `router.find(method, path)`
-  - Returns `{ handler, params, store? }` or `null`.
-  - Internally normalizes `method` and ensures `path` starts with `/`.
-
-## Data Model At A Glance
-
-At runtime, v2 matches using a compact per-method automaton:
-
-- **States** are integer ids starting at `0` (root state).
-- **Static edges** (literal segments) are stored in a per-state map: `stateStaticMaps[state][literal] -> nextState`.
-- **Dynamic edges** (params and wildcards) are stored in parallel typed arrays:
-  - `stateDynOffset[state]` / `stateDynCount[state]` provide a slice into:
-    - `dynKind[]` (param or wildcard)
-    - `dynNameIds[]` (index into `paramNames[]`)
-    - `dynValidatorIds[]` (index into router validator table)
-    - `dynNext[]` (next state id)
-- **Accept state**: `stateAcceptIndex[state]` points to an `accepts[]` entry containing `{handler, store?}`.
-
-```mermaid
-flowchart TD
-    A["Route pattern string<br/>/abc/:name([a-z]+)/:other(\\d+)"] --> B["normalizePath()"]
-    B --> C["split on '/'<br/>tokenizePathPattern(): normalized.split('/').slice(1)"]
-    C --> D["Raw segments<br/>1) abc<br/>2) :name([a-z]+)<br/>3) :other(\\d+)"]
-
-    D --> E1["parseParamSegment('abc') -> null"]
-    E1 --> T1["Token: static('abc')"]
-
-    D --> E2["parseParamSegment(':name([a-z]+)')"]
-    E2 --> T2["Token: param<br/>name=name<br/>pattern=[a-z]+"]
-
-    D --> E3["parseParamSegment(':other(\\d+)')"]
-    E3 --> T3["Token: param<br/>name=other<br/>pattern=\\d+"]
-
-    subgraph Build["Compile (per method)"]
-      T1 --> S0["BuildState root"]
-      S0 -->|static edge: abc| S1["BuildState"]
-      S1 -->|dyn edge: param name| S2["BuildState"]
-      S2 -->|dyn edge: param other| S3["BuildState accept"]
-    end
-
-    subgraph Runtime["Match (find method,path)"]
-      P["Incoming path string"] --> Q["_scanPathSegments(path)<br/>fills starts/ends, returns depth"]
-      Q --> R["_findInAutomaton(methodAutomaton, path, depth)"]
-      R --> U["At each state+segment:<br/>1) try dyn edges (validators)<br/>2) try static
-  map[segment]"]
-      U --> V["Accept state reached?"]
-      V -->|yes| W["Build params object (only if captures exist)"]
-      V -->|no| X["No match -> try '*' method / regex fallback -> null"]
-    end
-```
-
-## Build Phase (Compilation)
-
-Compilation happens lazily on the first `find()` call:
-
-1. Route definitions are collected by `on(...)`.
-2. `_ensureCompiled()` calls `_compile()` if needed and clears caches.
-3. `_compile()`:
-   - Splits routes into:
-     - **String pattern routes** (compiled into automata)
-     - **Regex routes** (kept as ordered lists with a cheap `minDepth` filter)
-   - Builds a `MethodAutomaton` for each method.
-   - Also caches pointers to the GET and `*` (wildcard method) automata for fast dispatch.
-
-### Pattern Tokenization
-
-String patterns are tokenized into segments:
-
-- Static: `users`
-- Param: `:id` (optional validator pattern)
-- Wildcard: `:rest*` (captures the rest of the path)
-
-Optional segments and simple alternations are expanded into multiple variants at compile time.
-
-```mermaid
-flowchart TD
-  A["String route pattern"] --> B["normalizePath()"]
-  B --> C["tokenizePathPattern()"]
-  C --> D["Expand variants<br/>(optional segments, alternations)"]
-  D --> E["Insert into BuildState graph"]
-  E --> F["Assign state ids"]
-  F --> G["Emit MethodAutomaton arrays + maps"]
-```
-
-### BuildState Graph
-
-During compilation, each method is first represented as a graph of `BuildState` objects:
-
-- `staticEdges: Map<string, BuildState>`
-- `dynEdges: Array<{kind, name, validatorId, next, score, order}>`
-- `acceptIndex` if a route ends at this state
-
-Dynamic edges are sorted so that “more specific” matches are tried first (e.g. `:id(#int)` before `:id` before `:rest*`).
-
-## Match Phase (Lookup)
-
-`find(method, path)` performs a small dispatch + fast caching:
-
-1. Ensure compilation is done.
-2. Normalize `path` to ensure a leading `/` (fast `charCodeAt(0) === 47`).
-3. Fast path for GET:
-   - Check `_cacheGET[pathStr]` and return cached value if present.
-4. Otherwise resolve:
-   - `_findResolved(methodKey, pathStr)`
-5. Store in cache (GET has a specialized insert; others share a method map).
-
-```mermaid
-sequenceDiagram
-  participant Caller
-  participant Router as AutomatonRouter
-  participant Cache as GET cache / method cache
-  participant Auto as MethodAutomaton
-  participant Regex as Regex list
-
-  Caller->>Router: find(method, path)
-  Router->>Router: _ensureCompiled()
-  Router->>Router: normalize path to pathStr
-  Router->>Cache: lookup cached[method,pathStr]
-  alt cache hit
-    Cache-->>Router: RouteMatch | null
-    Router-->>Caller: cached result
-  else cache miss
-    Router->>Router: _scanPathSegments(pathStr)
-    Router->>Auto: _findInAutomaton(automaton)
-    alt automaton match
-      Auto-->>Router: RouteMatch
-    else no match
-      Router->>Auto: try '*' method automaton (if any)
-      alt still no match and regex enabled
-        Router->>Regex: _findInRegex(methodKey / '*')
-        Regex-->>Router: RouteMatch | null
-      end
-    end
-    Router->>Cache: store result with eviction ring
-    Router-->>Caller: RouteMatch | null
-  end
-```
-
-### Segment Scanning (Once)
-
-Before walking the automaton, the router scans `pathStr` to identify each segment’s `[start,end)` indices.
-
-This avoids splitting strings into an array of segments and keeps allocations low.
-
-- `_scanPathSegments(pathStr)` populates:
-  - `_segmentStarts[]`
-  - `_segmentEnds[]`
-  - returns `depth` (segment count)
-
-The matcher then uses `path.slice(starts[i], ends[i])` to obtain the current segment string only when needed.
-
-### Automaton Walk (DFS with Manual Stacks)
-
-`_findInAutomaton(automaton, pathStr, depth)` walks the state machine with explicit stacks to avoid recursion:
-
-- `stateStack[]`, `indexStack[]` track backtracking frames
-- capture stacks track param values only when dynamic edges are traversed
-
-Key behaviors:
-
-- At a state:
-  - If `index === depth`:
-    - if accepting state: return handler (build params object only if captures exist)
-    - also consider wildcard edges that can match “empty rest”
-  - Else:
-    - try dynamic edges (params/wildcard) with validators
-    - then try static edge for the current segment
-
-Note: edges are pushed in reverse order so that the highest-priority edge is visited first.
-
-### Validators and Wildcards
-
-Param validators are pre-registered at compile time and referenced by small integer ids.
-
-- Common validators are implemented as fast character checks (`int`, `alpha`, `slug`, `locale`, `uuid`).
-- Arbitrary patterns compile to `new RegExp('^...$')` and are tested only when that edge is explored.
-
-Wildcard params capture “the rest of the path”. The router avoids building the rest string during traversal; it records an index and later constructs it from the known segment boundaries only if that wildcard capture is part of the winning match.
-
-## Regex Routes (Fallback)
-
-Routes defined as `RegExp` are not compiled into the automaton. They are stored per method as an ordered list with a `minDepth` hint:
-
-- `minDepth` is derived from a literal prefix extraction (best-effort).
-- During match, regex routes are only tested when `minDepth <= depth`.
-
-This keeps regex support available without forcing the automaton fast path to depend on regex checks in the common case.
-
-## Caching and Eviction
-
-The router caches full `(method, pathStr)` lookup results:
-
-- GET has a dedicated object cache: `_cacheGET[pathStr]`.
-- Other methods have a per-method object cache stored in `_cacheOther`.
-- A shared ring buffer stores `(method, pathStr)` keys to evict the oldest entry when the cache is full.
-
-Important properties:
-
-- Cache stores both hits and misses (`null`) to accelerate 404-heavy traffic.
-- Cache is cleared on compilation to avoid stale handlers after route changes.
+The router treats the whole route table as one regular language. It compiles that language into a DFA ahead of time, then runs the DFA from a typed-array table. A lookup reads each character once, with no backtracking.
 
 ```mermaid
 flowchart LR
-  subgraph Ring["Eviction ring (size = cacheLimit)"]
-    K0["(m0,p0)"] --> K1["(m1,p1)"] --> K2["..."] --> KN["(mN,pN)"]
-  end
-  Ring -->|evict oldest| Caches["method->(path->match)"]
-  Caches -->|store new| Ring
+  A["Routes"] --> B["pattern.ts<br/>variants and ranks"]
+  A --> C["regex-parser.ts<br/>regex to AST"]
+  B --> D["nfa.ts<br/>Thompson NFA"]
+  C --> D
+  D --> E["dfa.ts<br/>subset construction,<br/>Hopcroft minimization"]
+  E --> F["table.ts<br/>typed arrays"]
+  F --> G["matcher.ts<br/>hot loop"]
 ```
 
-## Practical Notes
+## Why a table
 
-- v2 is designed for **fast steady-state lookups** after a one-time compilation.
-- Most performance work tends to focus on:
-  - `_scanPathSegments` (per-request cost)
-  - `_findInAutomaton` (backtracking, validator checks, and segment slicing)
-  - caching behavior under mixed hit/404 workloads
+This design comes from measuring what a lookup actually spends its time on, on shuffled traffic.
+
+- **Reading characters is cheap.** One more `charCodeAt` costs about 0.6ns. A radix tree's `Map.get` per branch costs about 8ns.
+- **Mispredicted branches are expensive.** Each URL takes several unpredictable decisions, such as which route, and whether there's a locale. Generated JavaScript lost 28ns of its 59ns to mispredicts: it ran in 32ns on the same URLs sorted.
+- **A table turns those decisions into data.** A lookup in a table doesn't branch on the data it reads, so the only unpredictable branch left is the loop's exit.
+
+So routing branches aren't generated. That also avoids V8's 61,440-byte limit on optimizing a function: a code generator that unfolded the DFA produced 6.5MB of source, and ran at 6µs a lookup in the interpreter.
+
+## The hot loop
+
+```ts
+for (; i < n; i++) {
+  const c = s.charCodeAt(i);
+  x = TT[(st << K) + CLS[c < 128 ? c : 128]];
+  if (x >= STOP) break;
+  st = x;
+}
+```
+
+`CLS` compresses the alphabet into classes of symbols no route tells apart, which keeps rows short. `x >= STOP` is the only check per character. Everything rare leaves through it, by the value in the table:
+
+| Value of `x` | Meaning |
+|---|---|
+| Below `STOP` | The next state |
+| `STOP` | Dead: no route continues |
+| `SCAN` and up | Continue in `slow`, from state `x - SCAN` |
+
+Rules for changing this loop, each from a measurement:
+
+1. **Keep one flat loop.** Nesting it cost 5.5ns even when the outer loop never ran.
+2. **Allow one exit check per character.**
+3. **Don't track slashes while scanning.** Recover positions after the match.
+4. **Put rare work in `slow`,** never in `find`.
+5. **Don't generate routing branches.**
+
+## Leaving the hot loop
+
+`slow` owns everything else, and keeps its own loop so that `find` can stay flat.
+
+- **Long params.** Stepping through a long param costs more than `indexOf`. A short param stays in the table through a chain of copies of its scan state, and a long one leaves for `slow`, which searches for the next `/`. Tables past 1,500 states drop the chains, which are 15% faster at 34 routes but 12% slower at 300.
+- **Tails.** A state that loops on everything but `?`, like a wildcard's, can't be left, so `slow` jumps to the end of the path.
+- **Non-ASCII characters.** See below.
+
+## Non-ASCII paths
+
+The alphabet has 129 symbols: ASCII, plus one for every code unit above it. That can't separate `/café` from `/cafü`, or express that `.` excludes U+2028. So sets may over-accept above ASCII, but never under-accept.
+
+- The parser marks a route **inexact** if any of its sets holds only part of the range above ASCII.
+- A transition on a non-ASCII character always leaves the hot loop, so it pays nothing for this.
+- `slow` carries on with the DFA. If the result is inexact, `miss` confirms candidates in priority order with `RegExp`. Exact results skip this, and most routes are exact.
+
+A missing transition on a non-ASCII character is still an exact rejection, because sets never under-accept.
+
+## Methods
+
+One DFA serves every method. Each state keeps every route that accepts there, and a row per distinct accept set holds one result per method. Ties follow each method's own registration order, so each method ranks routes separately.
+
+## Params
+
+`find` does no work for params. On first read, `Match.params` runs the variant's extractor, which uses the cheapest method that is correct:
+
+1. Fixed offsets, when everything before the param has a known width
+2. Anchoring from the end, when everything after it has a known width
+3. `indexOf('/')`, when the param can't contain `/`
+4. `RegExp.exec`, for anything else
+
+Extractors are generated with `new Function`, so that each params object has a fixed shape. Routes of one shape share a function, with their offsets in a closure: 3,000 routes would otherwise be 3,000 functions, each called too rarely for V8 to optimize. Where code generation is blocked, as under a strict CSP, extractors use `RegExp`.
+
+## Budgets
+
+A DFA can be exponentially larger than its routes, so nothing about its size is assumed.
+
+- **Per route.** A route needing more than 4,096 states alone is left out of the DFA, and runs as a residual route.
+- **Per table.** Past `maxStates`, compiling fails, and the error names the route that went over.
+
+Route tables with heavy overlap between params and literals are the worst realistic case: 300 such routes need about 80,000 states and compile in 0.7s. A REST API of 3,000 routes needs about 14,000.
+
+## Testing
+
+`bench/reference.mjs` is a slow, independent model of the router: one `RegExp` per variant, scanned in priority order. It imports nothing from `src/`.
+
+- `test/router-consistency.test.mjs` compares the router with it, on route and params, across the bench corpora and their mutations. A self-test proves that the comparison can fail.
+- `test/fixtures/routes-overlap.mjs` exists because no URL in the bench route sets matches more than one route, so they can't detect a ranking bug.
+- `test/compiler/regex-fuzz.test.ts` compares the parser with `RegExp`.
+
+## Measuring
+
+- **Run one router per process.** Otherwise one router's type feedback slows down the next.
+- **Replay fresh strings.** Literals are internalized with cached hashes, which flatters URL caches.
+- **Check the hit rate.** `bench.mjs` fails a run that under-matches the reference. A router that returns `null` for most URLs looks fast.
+- **Keep the machine quiet.** The same code ran 12% slower with 6 busy processes, and 41% slower with 8.

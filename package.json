@@ -5,7 +5,7 @@
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "tsx --test",
+    "test": "tsx --test test/*.test.* test/compiler/*.test.*",
     "test:consistency": "FULL_CORPUS=1 tsx test/router-consistency.test.mjs",
     "bench": "node bench/bench.mjs",
     "bench:static": "scripts/bench/run-static-bench.sh",
@@ -23,7 +23,7 @@
     "url": "https://github.com/joeyciechanowicz/balancing-router/issues"
   },
   "homepage": "https://github.com/joeyciechanowicz/balancing-router#readme",
-  "description": "Trie-based HTTP router with adaptive rebalancing.",
+  "description": "HTTP router that compiles regex routes into one DFA.",
   "devDependencies": {
     "@koa/router": "^15.3.0",
     "@medley/router": "^0.2.1",

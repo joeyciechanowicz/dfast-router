@@ -12,7 +12,7 @@ This repo uses an iterative, benchmark- and profiler-driven workflow. Every perf
    - Use Node V8 profiler to capture hotspots:
      - `node --prof bench/bench.mjs --json`
      - `node --prof-process isolate-*.log > profile.txt`
-   - Focus on hot functions in `src/index.ts` (route matching, regex checks, params handling).
+   - Focus on `src/matcher.ts`, and read its rules in `how-it-works.md` first.
 
 3) **Iterate in Small Steps**
    - Make a single focused change.
@@ -23,13 +23,11 @@ This repo uses an iterative, benchmark- and profiler-driven workflow. Every perf
    - Each performance improvement is its own commit.
    - Commit message should describe the optimization.
 
-5) **Rebalance of Routes**
-   - Benchmarks should not rebalance during the timed run.
-   - Rebalancing belongs in warmup only.
-
 ## Benchmark Rules
 
 - Default bench time is 1000ms per task; use `--time` for longer runs.
+- Run one router per process (`--only`, or `npm run bench:compare`). Keep the machine quiet: 6 busy processes add 12%, and 8 add 41%.
+- Compare a router only at its hit rate. `bench.mjs` fails a run more than 0.1 points under the reference.
 - Always look at `rme` (relative margin of error) and samples.
 - If `rme` is high, increase time and rerun.
 - Bench traffic is generated from full route `count` values in `bench/routes.mjs`.
@@ -45,5 +43,5 @@ This repo uses an iterative, benchmark- and profiler-driven workflow. Every perf
 ## Definition of Done for Perf Changes
 
 - Bench compare shows improvement for balancing-router.
-- No functional regressions.
+- No functional regressions: `npm test` and `npm run test:consistency` both pass.
 - Change committed with a clear message.

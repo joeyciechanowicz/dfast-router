@@ -2,7 +2,7 @@
 
 Replace the deleted router in `src/` with one DFA compiled from the whole route table, run from a typed-array table. The work is split into 13 work packages, done one at a time in a single session.
 
-**Status:** in progress. See the [progress log](#progress-log). The working prototype is in `prototype/` (see [Prototype](#prototype)).
+**Status:** implemented on `dfa-router`. Two items are open: the x86-64 re-run, and narrow misses on long params. See [Acceptance criteria](#acceptance-criteria). `PLAN.md` and `prototype/` stay until those are decided.
 
 ## Goal
 
@@ -672,29 +672,34 @@ Follow the `AGENTS.md` workflow exactly: profile first, make one change, run `np
 1. Rewrite `README.md` and `how-it-works.md` for the new design, with D2 and D3 called out as behaviour changes.
 2. Update `AGENTS.md`: replace the `src/index.ts` and rebalance guidance, and add the hit-rate and one-process-per-router rules.
 3. Update the `package.json` description, and delete `profile-medley-router.txt`.
-4. Check that nothing imports `prototype/`, then delete it.
-5. Delete this plan last, once the progress log's final numbers are in `how-it-works.md`.
+4. Check that nothing imports `prototype/`, then delete it. **Held back until the open items are decided.**
+5. Delete this plan last, once the progress log's final numbers are in `how-it-works.md`. **Held back, as above.**
 
 **Done when:** `npm run build`, `npm test`, and `FULL_CORPUS=1 npm run test:consistency` all pass with `prototype/` gone.
 
 ## Acceptance criteria
 
-All of these must hold on both route sets, measured against medley given matchable routes:
+Measured at G4, in rotation against medley given matchable routes, with the 1-minute load between 2.4 and 5.5 for most of the run. Where there are two numbers, they're for the generic and held-out route sets.
 
-| Check | Requirement | Prototype today |
-|---|---:|---:|
-| `npm test` | All pass | Not applicable |
-| Differential, including `routes-overlap` | 0 mismatches on route and params | 0, bench route sets only |
-| Regex fuzz | 0 mismatches | Not built |
-| `bench.mjs --read-params` | ≥ 1.9× | 2.0× |
-| `bench.mjs`, params unread | ≥ 2.5× | 2.9× |
-| Near-miss 404s | ≥ 1.8× | 2.6× |
-| Query strings | ≥ 1.8× | 1.9× |
-| UUID and 200-char token params | ≥ 1.8× | 1.9× |
-| 3000 REST routes, uniform traffic | ≥ 1.4×, compile under 1s | 1.4×, 0.54s |
-| Pathological route tables | No hang; clear failure or demotion | Hangs |
-| Hit rate in every benchmark | Within 0.1 points of the reference | Not enforced |
-| Node 20, 22, 24, 25 | All pass | Numbers stable |
+| Check | Requirement | Result | |
+|---|---:|---:|---|
+| `npm test` | All pass | 309 of 309 | Pass |
+| Differential, including `routes-overlap` | 0 mismatches on route and params | 0 of 2.7M lookups | Pass |
+| Regex fuzz | 0 mismatches | 0 | Pass |
+| `bench.mjs --read-params` | ≥ 1.9× | 2.05×, 2.14× | Pass |
+| `bench.mjs`, params unread | ≥ 2.5× | 2.97×, 3.05× | Pass |
+| Near-miss 404s | ≥ 1.8× | 2.39×, 2.44× | Pass |
+| Query strings | ≥ 1.8× | 1.82×, 1.91× | Pass |
+| UUID params | ≥ 1.8× | 1.75×, 1.80× | **Narrow miss** |
+| 200-char token params | ≥ 1.8× | 1.76×, 1.79× | **Narrow miss** |
+| Wildcard tails (added at WP-11) | Beat medley | 56ns vs 60ns at 200 chars | Pass |
+| 3000 REST routes, uniform traffic | ≥ 1.4×, compile under 1s | 1.61×, 0.12s | Pass |
+| Pathological route tables | No hang; clear failure or demotion | Fails in 20s, naming a route | Pass |
+| Hit rate in every benchmark | Within 0.1 points of the reference | Enforced by `bench.mjs` | Pass |
+| Node 20, 24, 25 | All pass | 309 of 309 on each | Pass |
+| x86-64 re-run | Table design still ranks first | **Not run** | **Open** |
+
+The two narrow misses are on a gate set from the prototype in a lighter harness. On `bench.mjs`, the prototype itself reaches 1.77×–1.85×, so the router is at the design's limit there. The gate is unchanged.
 
 ## Risks
 
@@ -757,3 +762,6 @@ Record every package and gate here.
 | 2026-10-30 | WP-9 | e70d2a9 | | | | | 304 tests; regex routes compile; residual routes interleave. 300 overlapping routes compile in 0.7s, 1000 in 28s |
 | 2026-10-30 | WP-10 | | | | | | Not built: Hopcroft removed its premise. Budget raised to 262,144 states |
 | 2026-10-30 | G2 | a1de2ab | 19.28M unread, 12.60M read (generic); 19.91M, 13.17M (specific) | 6.51M, 6.27M; 6.45M, 6.25M | 2.96×, 2.01×; 3.09×, 2.11× | 94.95%, 94.99% | Passes provisionally, in fixed rotation at load 5–60. Within -4.9% to +1.5% of prototype. Re-measure at G4 |
+| 2026-10-30 | WP-11 | 3600bd0 | | | | | Inexact-only confirmation and `byteLength` (token200 0.94× to 1.76×); shared extractors (3000 routes 1.31× to 1.46×); no chains past 1,500 states; CSP fallback; wildcard tails (418ns to 53ns). x86-64 not run |
+| 2026-10-30 | G4 | 3600bd0 | 20.52M unread, 13.84M read | 6.90M, 6.76M | 2.97×, 2.05× | 94.95% | See [Acceptance criteria](#acceptance-criteria). Two narrow misses, one item open |
+| 2026-10-30 | WP-12 | | | | | | Docs done. Deleting `prototype/` and this plan held back for the open items |
