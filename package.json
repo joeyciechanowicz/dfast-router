@@ -6,11 +6,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "tsx --test",
-    "test:consistency": "node test/router-consistency.test.mjs",
+    "test:consistency": "FULL_CORPUS=1 node test/router-consistency.test.mjs",
     "bench": "node bench/bench.mjs",
     "bench:static": "scripts/bench/run-static-bench.sh",
-    "bench:gate": "node scripts/bench/step8-adoption-gate.mjs",
-    "bench:matrix": "node scripts/bench/step10-matrix.mjs",
     "bench:compare": "node scripts/bench/compare.mjs",
     "profile:router": "node --prof scripts/profile-router.mjs"
   },

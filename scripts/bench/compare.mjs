@@ -5,8 +5,18 @@ import { spawnSync } from 'node:child_process';
 
 const root = process.cwd();
 const tscPath = resolve(root, 'node_modules', 'typescript', 'bin', 'tsc');
+const typeRoots = resolve(root, 'node_modules', '@types');
 const compareTime = Number(process.env.BENCH_COMPARE_TIME || 5000);
 const compareRuns = Number(process.env.BENCH_COMPARE_RUNS || 3);
+// Anything else on the command line goes to bench.mjs: `npm run bench:compare -- --corpus near404`.
+const benchArgs = process.argv.slice(2);
+const baselineRouter = 'medley-router-local';
+const routerNames = [
+  'balancing-router',
+  '@medley/router',
+  baselineRouter,
+  'path-to-regexp-linear',
+];
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { encoding: 'utf8', ...options });
@@ -21,12 +31,15 @@ function getPreviousIndex() {
 }
 
 function buildRouter(projectDir, outDir) {
+  // The previous commit's worktree has no node_modules, so its types come from this one.
   const result = run(process.execPath, [
     tscPath,
     '-p',
     'tsconfig.json',
     '--outDir',
     outDir,
+    '--typeRoots',
+    typeRoots,
   ], { cwd: projectDir });
   if (result.status !== 0) {
     throw new Error(result.stderr || result.stdout || 'TypeScript build failed');
@@ -34,8 +47,18 @@ function buildRouter(projectDir, outDir) {
   return resolve(outDir, 'index.js');
 }
 
-function runBench(routerPath, runSeed) {
-  const args = ['bench/bench.mjs', '--json', '--time', String(compareTime), '--seed', String(runSeed)];
+function runBench(routerPath, routerName, runSeed) {
+  const args = [
+    'bench/bench.mjs',
+    '--json',
+    '--only',
+    routerName,
+    '--time',
+    String(compareTime),
+    '--seed',
+    String(runSeed),
+    ...benchArgs,
+  ];
   if (routerPath) {
     args.push('--router', routerPath);
   }
@@ -46,15 +69,18 @@ function runBench(routerPath, runSeed) {
   return JSON.parse(result.stdout);
 }
 
+// Each router gets its own process, so one router's type feedback can't slow down the next.
 function bestOfRuns(routerPath) {
   const bestByName = new Map();
   for (let runIndex = 0; runIndex < compareRuns; runIndex += 1) {
     const runSeed = seed + runIndex;
-    const runResult = runBench(routerPath, runSeed);
-    for (const entry of runResult.results) {
-      const best = bestByName.get(entry.name);
-      if (!best || entry.hz > best.hz) {
-        bestByName.set(entry.name, entry);
+    for (const routerName of routerNames) {
+      const runResult = runBench(routerPath, routerName, runSeed);
+      for (const entry of runResult.results) {
+        const best = bestByName.get(entry.name);
+        if (!best || entry.hz > best.hz) {
+          bestByName.set(entry.name, entry);
+        }
       }
     }
   }
@@ -68,12 +94,37 @@ function formatDelta(current, previous) {
   return `${sign}${delta.toFixed(1)}%`;
 }
 
+function formatRatio(entry, baseline) {
+  if (!baseline || baseline.hz === 0) return `no ${baselineRouter} result`;
+  return `${(entry.hz / baseline.hz).toFixed(2)}x ${baselineRouter}`;
+}
+
+function printResults(current, previous) {
+  const currentMap = new Map(current.results.map((entry) => [entry.name, entry]));
+  const previousMap = new Map(previous?.results.map((entry) => [entry.name, entry]));
+  const baseline = currentMap.get(baselineRouter);
+
+  for (const name of routerNames) {
+    const entry = currentMap.get(name);
+    if (!entry) {
+      console.log(`- ${name}: skipped, no result`);
+      continue;
+    }
+    const prev = previousMap.get(name);
+    const vsPrevious = prev
+      ? `prev ${Math.round(prev.hz)}; ${formatDelta(entry.hz, prev.hz)}`
+      : 'no previous baseline';
+    console.log(
+      `- ${name}: ${Math.round(entry.hz)} ops/sec (${vsPrevious}), ${formatRatio(entry, baseline)}, hit rate ${entry.hitRate.toFixed(2)}%`,
+    );
+  }
+}
+
 const previousIndex = getPreviousIndex();
 const seed = process.env.BENCH_SEED ? Number(process.env.BENCH_SEED) : Date.now();
 if (!previousIndex) {
   console.log('No previous commit found. Running current benchmarks only.');
-  const current = bestOfRuns();
-  console.log(JSON.stringify(current, null, 2));
+  printResults(bestOfRuns());
   process.exit(0);
 }
 
@@ -94,18 +145,8 @@ try {
   const current = bestOfRuns(currentPath);
   const previous = bestOfRuns(previousPath);
 
-  const previousMap = new Map(previous.results.map((entry) => [entry.name, entry]));
-
   console.log(`Benchmark comparison (best of ${compareRuns}, ${compareTime}ms each, current vs previous):`);
-  for (const entry of current.results) {
-    const prev = previousMap.get(entry.name);
-    if (!prev) {
-      console.log(`- ${entry.name}: ${Math.round(entry.hz)} ops/sec (no previous baseline)`);
-      continue;
-    }
-    const delta = formatDelta(entry.hz, prev.hz);
-    console.log(`- ${entry.name}: ${Math.round(entry.hz)} ops/sec (prev ${Math.round(prev.hz)}; ${delta})`);
-  }
+  printResults(current, previous);
 } finally {
   if (worktreeAdded) {
     run('git', ['worktree', 'remove', '--force', previousWorktree], { cwd: root });

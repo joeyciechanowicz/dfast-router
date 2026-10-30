@@ -2,6 +2,8 @@ import { bench, measure, run } from "mitata";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import { buildCorpus } from "./corpus.mjs";
+import { createReference } from "./reference.mjs";
 import { routes, precomputedUrls } from "./routes.mjs";
 
 const require = createRequire(import.meta.url);
@@ -11,6 +13,10 @@ const root = resolve(here, "..");
 const args = new Set(process.argv.slice(2));
 const jsonOutput = args.has("--json");
 const asyncMode = args.has("--async");
+const readParams = args.has("--read-params");
+const internedStrings = args.has("--interned");
+const corpusIndex = process.argv.indexOf("--corpus");
+const corpusName = corpusIndex !== -1 ? process.argv[corpusIndex + 1] : "clean";
 const timeIndex = process.argv.indexOf("--time");
 const timeArg = timeIndex !== -1 ? Number(process.argv[timeIndex + 1]) : null;
 const benchTime = Number.isFinite(timeArg) && timeArg > 0 ? timeArg : 1000;
@@ -51,8 +57,7 @@ function loadRouter() {
   return require(resolve(root, "dist", "index.js"));
 }
 
-const { createRouter, createAutomatonRouter, createMedleyRouter } =
-  loadRouter();
+const { createRouter, createMedleyRouter } = loadRouter();
 function logBuildError(name, error) {
   const message = error && error.stack ? error.stack : String(error);
   console.error(`[bench] ${name} setup failed:\n${message}`);
@@ -69,6 +74,12 @@ function getRequest(method, path) {
 }
 
 const METHOD = "GET";
+const WARMUP_ROUNDS = 50000;
+const HIT_SAMPLE_SIZE = 100_000;
+const HIT_RATE_TOLERANCE = 0.1;
+
+// `--read-params` stores here, because a read that nothing uses could be optimized away.
+let paramsSink = null;
 
 function normalizeLookupPath(path) {
   if (!path) return "/";
@@ -84,8 +95,12 @@ const routeFixtures = routeDefinitions.map((route) => [
   route.path,
   defaultHandler,
 ]);
+// Drops param regexes, which these routers can't validate. A trailing `.+` becomes a wildcard,
+// because it can cross `/` and a plain param can't.
 function toFrameworkSafePath(path) {
-  return path.replace(/:([A-Za-z0-9_]+)\([^)]*\)/g, ":$1");
+  return path
+    .replace(/:([A-Za-z0-9_]+)\(\.\+\)$/, ":$1*")
+    .replace(/:([A-Za-z0-9_]+)\([^)]*\)/g, ":$1");
 }
 const frameworkPatternSet = new Set();
 for (const route of routeDefinitions) {
@@ -99,14 +114,6 @@ const frameworkRouteFixtures = [...frameworkPatternSet].map((path) => [
   defaultHandler,
 ]);
 
-function createRouteMatcher(concretePatterns) {
-  const router = createRouter();
-  for (const pattern of concretePatterns) {
-    router.on(METHOD, pattern, defaultHandler);
-  }
-  return (path) => router.find(METHOD, path) !== null;
-}
-
 function validateRouteDefinitions(definitions) {
   const lowRng = () => 0.01;
   const highRng = () => 0.99;
@@ -116,14 +123,14 @@ function validateRouteDefinitions(definitions) {
         `[bench] Invalid count for route ${String(route.path)}: ${route.count}`,
       );
     }
-    const matcher = createRouteMatcher(route.concretePaths);
+    const matcher = createReference([route]);
     const variants = new Set();
     const rngs = [lowRng, highRng, createRng(seed ^ 0x17f12f3a)];
     for (const rng of rngs) {
       for (let i = 0; i < 32; i += 1) {
         const raw = route.generateUrl(rng);
         const normalized = normalizeLookupPath(raw);
-        if (!matcher(normalized)) {
+        if (matcher(normalized, METHOD) === null) {
           throw new Error(
             `[bench] Generator produced non-matching URL for route ${String(route.path)}: ${raw}`,
           );
@@ -178,22 +185,21 @@ const fullRequestCorpus = precomputedUrls
   ? precomputedUrls.map((path) => normalizeLookupPath(path))
   : buildRequestCorpus(routeDefinitions, createRng(seed ^ 0x0fedcba1));
 
-function buildBalancingRouter() {
-  const router = createRouter();
-  for (const [method, path, handler] of routeFixtures) {
-    router.on(method, path, handler);
-  }
-  return {
-    lookup: (method, path) => {
-      return router.find(method, path);
-    },
-    warmup: () => router.rebalance(),
-  };
+// A copy gets a flat string that isn't internalized, as a request URL would be.
+function toFreshString(path) {
+  return Buffer.from(path, "latin1").toString("latin1");
 }
 
-function buildBalancingRouterV2() {
-  if (typeof createAutomatonRouter !== "function") return null;
-  const router = createAutomatonRouter();
+// near404 can drop a URL's leading `/`. It's restored here because the reference adds it back but
+// medley rejects such a URL, so the routers would otherwise differ on URLs no client sends.
+const replayCorpus = buildCorpus(corpusName, fullRequestCorpus).map((url) => {
+  const path = normalizeLookupPath(url);
+  return internedStrings ? path : toFreshString(path);
+});
+
+// Every lookup returns its match, or null, so that `--read-params` can reach `.params`.
+function buildBalancingRouter() {
+  const router = createRouter();
   for (const [method, path, handler] of routeFixtures) {
     router.on(method, path, handler);
   }
@@ -208,15 +214,16 @@ function buildMedleyRouter() {
   try {
     const Router = require("@medley/router");
     const router = new Router();
-    for (const [method, path, handler] of routeFixtures) {
-      const store = router.register(path);
+    for (const [method, path, handler] of frameworkRouteFixtures) {
+      const store = router.register(toMedleyPattern(path));
       store[method] = handler;
     }
     return {
       lookup: (method, path) => {
         const match = router.find(path);
         if (!match) return null;
-        return match.store[method] ?? match.store["*"] ?? null;
+        const handler = match.store[method] ?? match.store["*"] ?? null;
+        return handler === null ? null : match;
       },
     };
   } catch (error) {
@@ -228,15 +235,16 @@ function buildMedleyRouter() {
 function buildMedleyRouterLocal() {
   if (typeof createMedleyRouter !== "function") return null;
   const router = createMedleyRouter();
-  for (const [method, path, handler] of routeFixtures) {
-    const store = router.register(path);
+  for (const [method, path, handler] of frameworkRouteFixtures) {
+    const store = router.register(toMedleyPattern(path));
     store[method] = handler;
   }
   return {
     lookup: (method, path) => {
       const match = router.find(path);
       if (!match) return null;
-      return match.store[method] ?? match.store["*"] ?? null;
+      const handler = match.store[method] ?? match.store["*"] ?? null;
+      return handler === null ? null : match;
     },
   };
 }
@@ -253,10 +261,14 @@ function buildPathToRegexpLinear() {
     });
     return {
       lookup: (method, path) => {
+        // Unlike the other routers, path-to-regexp matches the query string too.
+        const query = path.indexOf("?");
+        const target = query === -1 ? path : path.slice(0, query);
         for (let i = 0; i < entries.length; i += 1) {
           const entry = entries[i];
           // if (entry.method !== method && entry.method !== "*") continue;
-          if (entry.match(path)) return entry.handler;
+          const match = entry.match(target);
+          if (match) return match;
         }
         return null;
       },
@@ -289,7 +301,7 @@ function toPathToRegexpPattern(path) {
   return path;
 }
 
-function toRegexparamPattern(path) {
+function toMedleyPattern(path) {
   return path.replace(/:([A-Za-z0-9_]+)\*/g, "*");
 }
 
@@ -305,11 +317,93 @@ function calculateRme(samples) {
   return (margin / mean) * 100;
 }
 
+const percentOf = (count, total) => (100 * count) / total;
+
+// Compares each router with the reference URL by URL, because over-matching could otherwise hide
+// under-matching in the totals. Only under-matching fails the run: medley can't validate param
+// regexes, so it's expected to over-match.
+function measureHitRates(routers) {
+  const rates = new Map();
+  if (routers.length === 0) return rates;
+
+  // A prefix, not a stride: near404 cycles through its mutations by index, so a stride can land on
+  // one mutation only. The corpora are in random order, so a prefix isn't biased.
+  const sample = replayCorpus.slice(0, HIT_SAMPLE_SIZE);
+  const reference = createReference(routeDefinitions);
+  const expected = sample.map((path) => reference(path, METHOD) !== null);
+  const referenceHits = expected.filter(Boolean).length;
+
+  for (const [name, { lookup }] of routers) {
+    let overMatched = 0;
+    let underMatched = 0;
+    for (let i = 0; i < sample.length; i += 1) {
+      const hit = lookup(METHOD, sample[i]) !== null;
+      if (hit && !expected[i]) overMatched += 1;
+      if (!hit && expected[i]) underMatched += 1;
+    }
+    const rate = {
+      hitRate: percentOf(referenceHits + overMatched - underMatched, sample.length),
+      referenceHitRate: percentOf(referenceHits, sample.length),
+      overMatch: percentOf(overMatched, sample.length),
+      underMatch: percentOf(underMatched, sample.length),
+    };
+    rates.set(name, rate);
+    console.error(
+      `[bench] ${name}: hit rate ${rate.hitRate.toFixed(2)}%, reference ${rate.referenceHitRate.toFixed(2)}%, ` +
+        `over-matched ${rate.overMatch.toFixed(2)} points, under-matched ${rate.underMatch.toFixed(2)} points ` +
+        `(${corpusName} corpus, ${sample.length} URLs)`,
+    );
+  }
+
+  const failed = [...rates].filter(([, rate]) => rate.underMatch > HIT_RATE_TOLERANCE);
+  if (failed.length > 0) {
+    const names = failed.map(([name]) => name).join(", ");
+    throw new Error(
+      `[bench] More than ${HIT_RATE_TOLERANCE} points below the reference: ${names}`,
+    );
+  }
+  return rates;
+}
+
+function createBenchLookup({ lookup, framework }) {
+  const nextLookup = createCorpusLookup(replayCorpus);
+  if (asyncMode) {
+    return async () => {
+      const [method, path] = nextLookup();
+      const match = framework
+        ? await lookup(method, path, getRequest(method, path))
+        : await lookup(method, path);
+      if (readParams && match !== null) paramsSink = match.params;
+    };
+  }
+  if (readParams) {
+    return () => {
+      const [method, path] = nextLookup();
+      const match = lookup(method, path);
+      if (match !== null) paramsSink = match.params;
+    };
+  }
+  return () => {
+    const [method, path] = nextLookup();
+    lookup(method, path);
+  };
+}
+
+async function warmUp(benchLookup) {
+  for (let i = 0; i < WARMUP_ROUNDS; i += 1) {
+    if (asyncMode) {
+      await benchLookup();
+    } else {
+      benchLookup();
+    }
+  }
+}
+
 async function runBenchmarks() {
-  const warmupRounds = 50000;
   const results = [];
 
   const routerBuilders = [
+    ["balancing-router", () => buildBalancingRouter()],
     ["@medley/router", () => buildMedleyRouter()],
     ["medley-router-local", () => buildMedleyRouterLocal()],
     ["path-to-regexp-linear", () => buildPathToRegexpLinear()],
@@ -329,31 +423,12 @@ async function runBenchmarks() {
     routers.push([name, entry]);
   }
 
+  const hitRates = measureHitRates(routers);
+
   if (!jsonOutput) {
     for (const [name, routerEntry] of routers) {
-      const { lookup, warmup, framework } = routerEntry;
-      const nextLookup = createCorpusLookup(fullRequestCorpus);
-      const benchLookup = asyncMode
-        ? async () => {
-            const [method, path] = nextLookup();
-            if (framework) {
-              await lookup(method, path, getRequest(method, path));
-              return;
-            }
-            await lookup(method, path);
-          }
-        : () => {
-            const [method, path] = nextLookup();
-            lookup(method, path);
-          };
-      for (let i = 0; i < warmupRounds; i += 1) {
-        if (asyncMode) {
-          await benchLookup();
-        } else {
-          benchLookup();
-        }
-      }
-      if (warmup) warmup();
+      const benchLookup = createBenchLookup(routerEntry);
+      await warmUp(benchLookup);
       bench(name, async function* () {
         yield benchLookup;
       });
@@ -363,29 +438,8 @@ async function runBenchmarks() {
   }
 
   for (const [name, routerEntry] of routers) {
-    const { lookup, warmup, framework } = routerEntry;
-    const nextLookup = createCorpusLookup(fullRequestCorpus);
-    const benchLookup = asyncMode
-      ? async () => {
-          const [method, path] = nextLookup();
-          if (framework) {
-            await lookup(method, path, getRequest(method, path));
-            return;
-          }
-          await lookup(method, path);
-        }
-      : () => {
-          const [method, path] = nextLookup();
-          lookup(method, path);
-        };
-    for (let i = 0; i < warmupRounds; i += 1) {
-      if (asyncMode) {
-        await benchLookup();
-      } else {
-        benchLookup();
-      }
-    }
-    if (warmup) warmup();
+    const benchLookup = createBenchLookup(routerEntry);
+    await warmUp(benchLookup);
     const stats = await measure(
       async function* () {
         yield benchLookup;
@@ -400,6 +454,7 @@ async function runBenchmarks() {
       hz,
       samples: samples.length,
       rme: calculateRme(samples),
+      ...hitRates.get(name),
     });
   }
 
@@ -408,7 +463,9 @@ async function runBenchmarks() {
 
 const results = await runBenchmarks();
 if (jsonOutput) {
-  console.log(JSON.stringify({ results, seed }, null, 2));
+  console.log(
+    JSON.stringify({ results, seed, corpus: corpusName, readParams }, null, 2),
+  );
 } else if (results) {
   for (const result of results) {
     console.log(

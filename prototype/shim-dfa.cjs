@@ -14,4 +14,23 @@ function createMedleyRouter() {
     },
   };
 }
-module.exports = { ...dist, createMedleyRouter };
+// The "balancing-router" slot. Results keep the prototype's { store, params } shape, not RouteMatch:
+// wrapping them would add an allocation per hit, and the bench reads only null and `.params`.
+function createRouter() {
+  const dfa = createMedleyRouter(); const stores = new Map();
+  const router = {
+    on(method, path, handler) {
+      if (!stores.has(path)) stores.set(path, dfa.register(path));
+      for (const m of [method].flat()) stores.get(path)[m] = handler;
+      return router;
+    },
+    find(method, url) {
+      const match = dfa.find(url);
+      if (match === null) return null;
+      return (match.store[method] ?? match.store["*"]) === undefined ? null : match;
+    },
+    compile() { dfa.find("/"); },
+  };
+  return router;
+}
+module.exports = { ...dist, createMedleyRouter, createRouter };
