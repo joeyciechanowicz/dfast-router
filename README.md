@@ -1,6 +1,6 @@
 # balancing-router
 
-A fast HTTP router for routes defined as regexes. It compiles the whole route table into one DFA and runs it from a typed-array table, so a lookup takes the same time however many routes could match, and a regex route can't backtrack.
+A fast HTTP router for routes defined as regexes. It compiles the whole route table into one DFA and runs it from a typed-array table, so a lookup reads each character once, and most regex routes can't backtrack.
 
 On the bench traffic it's about 3× faster than a radix-tree router (`@medley/router`) that does less: it validates param regexes, which that router can't. See [Performance](#performance).
 
@@ -123,16 +123,16 @@ A param regex that can't compile works the same way: the route still ranks norma
 
 ## Performance
 
-Measured with `bench/bench.mjs` on an Apple M1 Pro with Node 22, best of 3 seeds. The URLs are fresh strings, as a real `req.url` would be, and `medley` is `@medley/router`'s algorithm.
+Measured with `bench/bench.mjs` on an Apple M1 Pro with Node 22, best of 3 seeds. The URLs are fresh strings, as a real `req.url` would be, and `medley` is `medley-router-local`, a TypeScript copy of `@medley/router`, given routes it can match. Lookups slow down as the table grows and stops fitting in cache: 95ns at 100 routes, and 206ns at 3,000.
 
 | Traffic | Params | balancing-router | medley | Ratio |
 |---|---|---:|---:|---:|
 | 34 routes, shuffled | not read | 20.5M/s (49ns) | 6.9M/s (145ns) | 3.0× |
 | 34 routes, shuffled | read | 13.8M/s (72ns) | 6.8M/s (148ns) | 2.0× |
 | Near-miss 404s | read | 18.5M/s (54ns) | 7.7M/s (130ns) | 2.4× |
-| Query strings | read | 12.6M/s (80ns) | 6.9M/s (145ns) | 1.8× |
-| 36-character params | read | 12.2M/s (82ns) | 7.0M/s (144ns) | 1.8× |
-| 200-character params | read | 11.9M/s (84ns) | 6.8M/s (148ns) | 1.8× |
+| Query strings | read | 12.6M/s (80ns) | 6.9M/s (145ns) | 1.82× |
+| 36-character params | read | 12.2M/s (82ns) | 7.0M/s (144ns) | 1.75× |
+| 200-character params | read | 11.9M/s (84ns) | 6.8M/s (148ns) | 1.76× |
 | 3,000 REST routes | read | 206ns | 330ns | 1.6× |
 
 Compiling 3,000 REST routes takes about 0.1s. These numbers come from a machine that wasn't fully idle, and from one CPU. `how-it-works.md` explains the design.
