@@ -130,6 +130,19 @@ test('routes of one shape share a function, and keep their own offsets', () => {
   assert.deepEqual(short('/a/3', 4), { id: '3' });
 });
 
+test('falls back to RegExp where code generation is blocked', () => {
+  const original = globalThis.Function;
+  globalThis.Function = function blocked() {
+    throw new EvalError('Code generation from strings disallowed');
+  } as unknown as FunctionConstructor;
+  try {
+    const extract = extractorOf(lastVariant('/never/seen/shape/:only/:one/:here'));
+    assert.deepEqual(extract('/never/seen/shape/a/b/c', 23), { only: 'a', one: 'b', here: 'c' });
+  } finally {
+    globalThis.Function = original;
+  }
+});
+
 test('case 3: finds the next `/`, when the param cannot hold one', () => {
   assert.equal(String(buildExtractor(lastVariant('/:a/:b'), parse)).includes('indexOf'), true);
   assert.deepEqual(extractorOf(lastVariant('/:a/:b'))('/x/y?q=/z', 4), { a: 'x', b: 'y' });

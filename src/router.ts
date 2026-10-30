@@ -13,7 +13,13 @@ import type { RouteHandler, RouteMatch } from './types';
 const DEFAULT_MAX_STATES = 262_144;
 /** A route needing more than this alone is left out of the DFA, so one can't use up the table. */
 const ROUTE_STATE_LIMIT = 4_096;
-const SCAN = { scanAfter: 8, scanRun: 8 };
+/**
+ * Short params stay in the table for `scanAfter` characters. That's 15% faster at 34 routes, but the
+ * extra states make big tables 12% slower, so tables past SCAN_CHAIN_STATES go without.
+ */
+const SCAN_AFTER = 8;
+const SCAN_RUN = 8;
+const SCAN_CHAIN_STATES = 1_500;
 const ANY_METHOD = '*';
 
 /** Stands in for a param regex the DFA can't hold. It over-accepts, so such a route is confirmed. */
@@ -381,7 +387,8 @@ function compileRoutes(
     return null;
   };
 
-  const table = buildTable(dfa, rowOf, SCAN);
+  const scanAfter = dfa.states > SCAN_CHAIN_STATES ? 0 : SCAN_AFTER;
+  const table = buildTable(dfa, rowOf, { scanAfter, scanRun: SCAN_RUN });
   const match = createMatcher(table, results, miss);
   return { match, methodIds, get: methodIds.get('GET') ?? 0, residual };
 }

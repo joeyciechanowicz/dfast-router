@@ -159,5 +159,11 @@ export function buildExtractor(v: Variant, parse: ParseFragment): Extractor | nu
   // The empty match of `/:a(.+)/*` can overlap the wildcard's own variant. See captureRegExp.
   const overlaps = hasDefaults && parts.some((part) => part.width < 0 && part.crosses);
   const body = overlaps ? null : fastBody(v, parts);
-  return body === null ? regExpExtractor(v) : instantiate(body);
+  if (body === null) return regExpExtractor(v);
+  try {
+    return instantiate(body);
+  } catch (error) {
+    if (error instanceof EvalError) return regExpExtractor(v); // code generation is blocked (CSP)
+    throw error;
+  }
 }
