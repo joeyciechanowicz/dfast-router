@@ -322,6 +322,8 @@ export class Router {
 export function createRouter(): Router;
 ```
 
+`Router.residual(): string[]` lists the routes not fully compiled into the DFA, which keep backtracking exposure (WP-9).
+
 ## Execution
 
 Packages run strictly one at a time, in the main checkout on `dfa-router`, with no subagents or worktrees. Parallel work was tried and stopped: the partial work from WP-2 to WP-7 is carried into the packages below.
@@ -741,3 +743,6 @@ Record every package and gate here.
 |---|---|---|---:|---:|---:|---:|---|
 | 2026-10-30 | WP-0 | 0cf2fa6 | | | | | Agent worktrees start from `main`, so agents fast-forward first |
 | 2026-10-30 | WP-1 | 162eede | | | | | 40 reference tests; 18 injected bugs caught; rulings D10 and D11 added after review |
+| 2026-10-30 | WP-3 to WP-8 | a1de2ab | | | | 94.95% | 290 tests pass, 1 `todo`; 0 mismatches on 2.7M lookups across three route sets |
+| 2026-10-30 | G1 | 39a5399 | 19.37M unread, 12.78M read (prototype) | 6.44M | 3.0×, 2.0× | 94.95% | Hit rate passes. Timing provisional: load 7–14 from other apps |
+| 2026-10-30 | G2 | a1de2ab | 19.28M unread, 12.60M read (generic); 19.91M, 13.17M (specific) | 6.51M, 6.27M; 6.45M, 6.25M | 2.96×, 2.01×; 3.09×, 2.11× | 94.95%, 94.99% | Passes provisionally, in fixed rotation at load 5–60. Within -4.9% to +1.5% of prototype. Re-measure at G4 |
