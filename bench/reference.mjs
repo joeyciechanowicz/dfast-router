@@ -11,12 +11,8 @@
 //
 // Priority: pattern routes for the method, pattern routes for "*", regex routes for the method, then
 // regex routes for "*". The first tier with a match wins. Pattern tiers compare segment scores left
-// to right, and regex tiers go by registration order. Earlier registration wins every tie.
-//
-// Two rules PLAN.md doesn't spell out:
-//   - When one rank is shorter, its missing entries count as 0. A wildcard's empty match keeps the
-//     wildcard's -100, so `/files` beats the empty match of `/files/:path*` in either order.
-//   - A wildcard's rest may be empty after the slash: `/files/` gives `{ path: "" }`.
+// to right, and regex tiers go by each method's registration order. Earlier registration wins every
+// tie. Registering a variant that already exists for a method replaces it, keeping its position.
 
 const SCORE = { static: 100, regex: 10, param: 0, wildcard: -100 };
 
@@ -170,11 +166,15 @@ function compareRank(a, b) {
   return 0;
 }
 
-function addTo(table, method, entries) {
-  const list = table.get(method);
-  if (list) list.push(...entries);
-  else table.set(method, [...entries]);
+// A Map keeps a key's first position when it's set again, which is the replace rule (D11).
+function register(table, method, key, entry) {
+  const entries = table.get(method);
+  if (entries) entries.set(key, entry);
+  else table.set(method, new Map([[key, entry]]));
 }
+
+const variantKey = (variant) => JSON.stringify(variant.map(({ optional, ...segment }) => segment));
+const regexKey = (regex) => `${regex.source}/${regex.flags.replace(/[gy]/g, "")}`;
 
 export function createReference(routes) {
   const patterns = new Map();
@@ -183,16 +183,23 @@ export function createReference(routes) {
   routes.forEach((route, id) => {
     const methods = new Set([route.method ?? "GET"].flat().map(normalizeMethod));
     for (const path of route.concretePaths) {
-      const isRegex = path instanceof RegExp;
-      const entries = isRegex
-        ? [compileRegex(path, id)]
-        : expandPattern(path).map((variant) => compileVariant(variant, id));
-      for (const method of methods) addTo(isRegex ? regexes : patterns, method, entries);
+      if (path instanceof RegExp) {
+        const entry = compileRegex(path, id);
+        for (const method of methods) register(regexes, method, regexKey(path), entry);
+        continue;
+      }
+      for (const variant of expandPattern(path)) {
+        const entry = compileVariant(variant, id);
+        for (const method of methods) register(patterns, method, variantKey(variant), entry);
+      }
     }
   });
 
   // The sort is stable, so ties stay in registration order and the first match is the best match.
-  for (const entries of patterns.values()) entries.sort((a, b) => compareRank(a.rank, b.rank));
+  for (const [method, entries] of patterns) {
+    patterns.set(method, [...entries.values()].sort((a, b) => compareRank(a.rank, b.rank)));
+  }
+  for (const [method, entries] of regexes) regexes.set(method, [...entries.values()]);
 
   const tiersFor = (method) => {
     const names = method === "*" ? ["*"] : [method, "*"];

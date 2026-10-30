@@ -56,14 +56,25 @@ test('priority: the first differing segment decides, left to right', () => {
 test('priority: ties go to registration order', () => {
   assert.deepEqual(table(['/u/:a', '/u/:b'])('/u/1'), { route: 0, params: { a: '1' } });
   assert.deepEqual(table(['/u/:b', '/u/:a'])('/u/1'), { route: 0, params: { b: '1' } });
-  assert.equal(routeOf(['/same', '/same'], '/same'), 0);
   assert.equal(routeOf(['/x/*', '/x/:rest*'], '/x/a/b'), 0);
+});
+
+test('priority: registering a route again replaces it and keeps its position (D11)', () => {
+  assert.equal(routeOf(['/same', '/same'], '/same'), 1);
+  assert.equal(routeOf(['/u/:a', '/u/:b', '/u/:a'], '/u/1'), 2);
+  assert.equal(routeOf([/^\/x$/, /^\/x$/], '/x'), 1);
+  assert.equal(routeOf(['/u/:a', ['POST', '/u/:a']], '/u/1'), 0);
+  assert.equal(routeOf(['/u/:a?', '/u/:a'], '/u/1'), 1);
 });
 
 test('priority: variants of one route rank on their own', () => {
   assertBeats('/a/:y#int', '/a/:x?', '/a/1');
-  assert.equal(routeOf(['/a/:x?', '/a'], '/a'), 0);
-  assert.equal(routeOf(['/a', '/a/:x?'], '/a'), 0);
+});
+
+test('priority: D11 applies to variants, so an optional can replace a static route', () => {
+  assert.equal(routeOf(['/a/:x?', '/a'], '/a'), 1);
+  assert.equal(routeOf(['/a', '/a/:x?'], '/a'), 1);
+  assert.equal(routeOf(['/a/:x?', '/a'], '/a/1'), 0);
 });
 
 test('priority: a shorter rank counts its missing segments as 0', () => {

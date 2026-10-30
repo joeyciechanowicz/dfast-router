@@ -145,3 +145,6 @@ vite.config.ts.timestamp-*
 bench/routes.local.mjs
 bench/routes-specific.mjs
 bench/routes-specific.urls.mjs
+
+# Agent worktrees
+.claude/worktrees/

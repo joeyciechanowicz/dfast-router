@@ -39,6 +39,8 @@ These are settled for this plan. Changing one after G2 means reworking finished 
 | D7 | No URL cache | The old GET cache only looks good because bench URLs are internalized literals with cached hashes. |
 | D8 | `createMedleyRouter` stays exported, marked as a bench baseline | The bench needs it. |
 | D9 | A route that expands to more than 256 variants throws at registration | Optional segments double the variants. A clear error is simpler than a second code path. |
+| D10 | Paths containing a non-ASCII character are confirmed with `RegExp` | All such characters share one DFA symbol, which can't separate `/café` from `/cafü` or express `.` exactly. See [Non-ASCII paths](#non-ascii-paths). |
+| D11 | Registering a variant that already exists for a method replaces it, keeping its position | Matches the old routers and medley. It applies per variant: `/a` replaces the shorter variant of an earlier `/a/:x?`. |
 
 ## Behaviour contract
 
@@ -51,12 +53,14 @@ These are settled for this plan. Changing one after G2 means reworking finished 
 | `?` ends the path | D3 | Yes |
 | `/files/*` gives `{ '*': rest }`; `/assets/:path*` gives `{ path: rest }` | tests | **No** |
 | `/files/:path*` also matches `/files`, with `{ path: '' }` | tests | **No** |
+| `/files/` matches `/files/:path*` with `{ path: '' }`: a wildcard's rest is `[^?]*` | reference | **No** |
 | A wildcard ends the pattern: `/a/:first*/b/:second*` captures only `first` | tests | **No** |
 | `#int`, `#alpha`, `#slug`, `#locale`, `#uuid`, also with `?`; unknown alias throws `Unknown validator alias` | tests | **No** |
 | Priority rules below (prototype uses registration order, which **contradicts** the tests) | tests | **No** |
 | Method arrays, case and whitespace normalization, `*`, unknown methods | tests | **No** |
 | Raw `RegExp` routes, deduplicated by source and flags across methods | tests | **No** |
 | Leading `/` added to paths; `''` becomes `/` | tests | **No** |
+| `/café` does not match `/cafü`, and `.` stays exact above ASCII | D10, reference | **No** |
 | `on()` returns the router and accepts `store`; `on()` after `find()` recompiles | tests, old code | **No** |
 
 ### Priority rules
@@ -74,7 +78,11 @@ Within a pattern tier, compare routes left to right by segment score. The first 
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | Score | 100 | 40 | 35 | 30 | 25 | 20 | 10 | 0 | -100 |
 
-The numbers below 100 come from `scoreEdge` in `git show c53789e:src/automaton-router.ts`. Static ranks above them all. Within a regex tier, registration order decides.
+The numbers below 100 come from `scoreEdge` in `git show c53789e:src/automaton-router.ts`. Static ranks above them all.
+
+- **Unequal lengths:** when one rank is shorter, its missing entries count as 0.
+- **Wildcard empty match:** that variant keeps the wildcard's -100, so `/files` beats the empty match of `/files/:path*` in either registration order.
+- **Regex tiers:** order is per method, the order of that method's registrations.
 
 **Neither bench route set exercises these rules.** On both, no URL (corpus plus 400k mutations) matches more than one route, so a router with wrong ranking would still pass every differential check on them. WP-7 adds an overlapping route set to close this gap.
 
@@ -154,6 +162,17 @@ Use one DFA for all methods. Keep every pattern that accepts in a state, then pr
 - `rowOf[st]` gives a row, and `rows[(row << methodBits) + m]` gives the result. That's one extra load per lookup, not per character.
 - `find` checks `method === 'GET'` first, then falls back to a normalizing `Map`.
 
+### Non-ASCII paths
+
+Every code unit above ASCII shares the `NON_ASCII` symbol, so the DFA can't be exact above ASCII. The design makes that safe without touching the hot loop:
+
+1. **Sets over-accept, and never under-accept.** A set includes `NON_ASCII` if it holds any code unit above ASCII. So `.`, `\s`, `\S`, and a static `é` all compile, and a missing `NON_ASCII` transition is an exact rejection.
+2. **The hot loop exits on the first non-ASCII character.** `buildTable` gives `NON_ASCII` its own class and encodes all its transitions in the scan band, so `x >= scan` catches them with no new check.
+3. **`slow` continues the DFA, then always calls `miss`** with the final row. It must also notice non-ASCII characters inside a galloped range, because `indexOf` skips over them.
+4. **`miss` confirms the row's candidates** in priority order with `variantRegExp`.
+
+Raw non-ASCII in `req.url` is rare, since clients percent-encode it. Confirmation only runs a few candidates' regexes, not the whole table.
+
 ### Param extraction
 
 Use the cheapest method that is correct for each variant, in this order:
@@ -189,7 +208,11 @@ export const NON_ASCII = 128;
 export const SLASH = 47;
 export const QMARK = 63;
 
-/** Membership per symbol, 0 or 1. Never contains QMARK, because `?` ends the path. */
+/**
+ * Membership per symbol, 0 or 1. Never contains QMARK, because `?` ends the path.
+ * NON_ASCII is 1 if the set holds any code unit above ASCII, so a set is exact on ASCII
+ * and may over-accept above it. See "Non-ASCII paths" in PLAN.md.
+ */
 export type CharSet = Uint8Array;
 
 export type Ast =
@@ -256,20 +279,28 @@ export interface Results {
   prebuilt: (RouteMatch | null)[];  // frozen result when there are no params
 }
 
-/** Called when the DFA gives no direct result. `row` is -1 if no state accepted. */
+/**
+ * Called when the DFA gives no direct result, and always for a path holding a non-ASCII
+ * character. `row` is the final state's accept row, or -1 if it has none.
+ */
 export type Miss = (path: string, method: number, end: number, row: number) => RouteMatch | null;
 ```
 
 Module signatures:
 
 ```ts
-// charset.ts: helpers named by WP-1 from the prototype's mkset
+// charset.ts (implemented)
+export function mkset(f: (symbol: number) => boolean): CharSet;
+export function single(symbol: number): CharSet;
+export function code(ch: string): number;                // clamps to NON_ASCII
+export function segSet(): CharSet;                       // [^/?]
 // regex-parser.ts
 export function parseFragment(source: string): Parsed;   // body of :name(...), matched whole
 export function parseRegExp(regex: RegExp): Parsed;      // whole path; unanchored sides add [^?]*
 // pattern.ts
 export function parsePattern(path: string): Variant[];   // throws on unknown alias, or over 256 variants
 export function variantAst(v: Variant, parse: ParseFragment): Parsed;
+export function variantRegExp(v: Variant): RegExp;       // exact, for non-ASCII confirmation
 export function compareRank(a: Variant, b: Variant): number; // negative when a wins
 // extract.ts
 export function buildExtractor(v: Variant, parse: ParseFragment): Extractor | null;
@@ -376,7 +407,7 @@ Deviations from the plan: none | <what and why>
 Open issues:
 ```
 
-Send follow-up fixes to the same agent with `SendMessage`, because a new agent would start cold.
+Send follow-up fixes to the same agent with `SendMessage`, because a new agent would start cold. An agent that stopped without committing has lost its worktree, because unchanged worktrees are deleted, so start a new agent instead.
 
 ### Merging
 
@@ -401,7 +432,7 @@ Contract problems are expected, but silent drift between agents is what makes pa
 
 ### Running a gate
 
-1. Confirm that no agents are running, and that the 1-minute load in `uptime` is under 2.
+1. Confirm that no agents are running, and that the 1-minute load in `uptime` is under 2. Remove finished worktrees with `git worktree remove`, because `.claude/worktrees/` sits inside the repo.
 2. Check out `dfa-router` in the main checkout, then run `npm run build`.
 3. Run the gate. Use `npm run bench:compare`, or `bench/bench.mjs` with best of 3 seeds at 3s each, so that numbers stay comparable with the tables here.
 4. Add the numbers to the [progress log](#progress-log).
@@ -453,7 +484,8 @@ Everything in Wave 2 fans out from this, so keep it small and exact.
 3. Add a stub for every module signature, each throwing `not implemented: <name>`, so that every worktree builds from the start.
 4. Add `src/index.ts`, exporting `createRouter`, `Router`, the public types, and `createMedleyRouter`.
 5. Add `bench/reference.mjs`, based on the regex scan in `prototype/verify.mjs`:
-   - Export `createReference(routes)`, returning `(url) => { route, params } | null`.
+   - Export `createReference(routes)`, returning `(url, method = 'GET') => { route, params } | null`.
+   - A route has `concretePaths`, which may hold `RegExp` entries, and an optional `method`, a string or array.
    - Cut the URL at `?`, and apply the priority rules for rank and tier.
    - It must not import anything from `src/`. An independent reference is what stops it sharing a bug with the router.
 6. Add `test/reference.test.mjs`, with hand-written priority cases.
@@ -496,15 +528,16 @@ node bench/bench.mjs --json --time 200 --only balancing-router --router "$PWD/pr
 
 ### WP-3: Regex parser
 
-**Depends on:** WP-1. **Owns:** `src/compiler/charset.ts`, `src/compiler/regex-parser.ts`, `test/compiler/regex-parser.test.ts`, `test/compiler/regex-fuzz.test.ts`, `test/helpers/ast-match.ts`.
+**Depends on:** WP-1. **Owns:** `src/compiler/regex-parser.ts`, `test/compiler/regex-parser.test.ts`, `test/compiler/regex-fuzz.test.ts`, `test/helpers/ast-match.ts`.
 
 The rule for this package: **preserve a regex's exact language, or return `{ ok: false }`. Never approximate.** A wrong parse silently changes which URLs match.
 
-1. Port `mkset` and `parseRegex` from `prototype/rc.mjs`. Only `?` is masked out of sets, because real regexes can cross `/`.
+1. Port `parseRegex` from `prototype/rc.mjs`, using `charset.ts`. Only `?` is masked out of sets, because real regexes can cross `/`.
 2. Support `^`, `$`, `\d \D \w \W \s \S`, `\xHH`, `\uHHHH`, classes with escapes, lazy quantifiers (same language as greedy), named and non-capturing groups, and the `i` and `s` flags.
 3. In `parseRegExp`, treat a missing `^` or `$` as `[^?]*` on that side.
-4. Return `{ ok: false }` for backreferences, lookaround, `\b`, `\p{...}`, the `m` flag, `^` or `$` anywhere except the ends, and any class that includes only part of the range above ASCII.
-5. Add `test/helpers/ast-match.ts`: a small AST matcher tracking sets of positions, independent of the NFA and DFA.
+4. Set `NON_ASCII` on any set that holds a code unit above ASCII ([Non-ASCII paths](#non-ascii-paths)). That's what lets `.`, `\s`, `\S`, and negated classes compile.
+5. Return `{ ok: false }` for backreferences, lookaround, `\b`, `\p{...}`, the `m`, `u`, and `v` flags, and `^` or `$` anywhere except the ends. Case folding under `u` can map non-ASCII characters onto ASCII, which would break the over-accept guarantee.
+6. Add `test/helpers/ast-match.ts`: a small AST matcher tracking sets of positions, independent of the NFA and DFA.
 
 **Done when:**
 
@@ -513,7 +546,10 @@ npm run build
 npx tsx --test test/compiler/regex-parser.test.ts test/compiler/regex-fuzz.test.ts
 ```
 
-The fuzz test generates random regexes and strings, and requires the AST matcher to equal `RegExp.test` on at least 100k pairs, with a fixed seed printed on failure.
+The fuzz test generates random regexes and strings, with a fixed seed printed on failure, on at least 100k pairs:
+
+- On ASCII strings, the AST matcher must equal `RegExp.test`.
+- On non-ASCII strings, it may over-accept, but must never reject what `RegExp.test` accepts.
 
 ### WP-4: NFA and DFA
 
@@ -550,8 +586,9 @@ These limits are wide enough to hold during a parallel wave.
 2. Implement in `pattern.ts`:
    - `(a|b)` segments and `:name?` optionals
    - Aliases, including `#int?`, throwing `Unknown validator alias`
-   - Wildcards, which end the pattern and add an empty-match variant through `defaults`
-   - Rank keys and `compareRank`
+   - Wildcards, which end the pattern, match `[^?]*`, and add an empty-match variant through `defaults`
+   - Rank keys and `compareRank`, following the [priority rules](#priority-rules)
+   - `variantRegExp`, exact for every variant, including escaped static text
    - The 256-variant limit (D9)
 3. Implement the four extraction cases in `extract.ts`, including the `RegExp.exec` case the prototype throws on.
 4. Keep the fast extractors as `new Function`, as in the prototype. Return `null` for variants with no params and no defaults.
@@ -576,6 +613,7 @@ Tests must cover every wildcard and alias row of the contract, and show extracti
 3. Add the `Match` class with the lazy `params` getter (D4), and return `prebuilt` results where they exist (D5).
 4. Use `rowOf` and `rows` for results, and call `miss` when there's no direct result.
 5. Use `Int32Array` for accept data. The prototype's `Int16Array` limits it to 32,767 variants.
+6. Implement [Non-ASCII paths](#non-ascii-paths) steps 2 and 3. Giving `NON_ASCII` its own class may double the table when the class count crosses a power of two. G2 checks whether that costs anything.
 
 In `test/helpers/dfa-fixture.ts`, adapt the prototype's `compile()` output to the `Dfa` contract: `T` to `trans`, `cls` to `classOf`, and `A` to single-entry `accepts`. WP-4 isn't merged yet, and this lets the matcher run on real routes now. WP-8 replaces it.
 
@@ -586,7 +624,7 @@ npm run build
 npx tsx --test test/compiler/matcher.test.ts
 ```
 
-Tests must cover both bench route sets with zero mismatches against `bench/reference.mjs`, plus long params, query strings, empty paths, and non-ASCII characters. Both `find` paths must be checked: the hot loop and `slow`.
+Tests must cover both bench route sets with zero mismatches against `bench/reference.mjs`, plus long params, query strings, empty paths, and non-ASCII characters. Both `find` paths must be checked: the hot loop and `slow`. Include a non-ASCII character inside a param long enough to gallop, which must still reach `miss`.
 
 ### WP-7: Contract and differential tests
 
@@ -595,13 +633,13 @@ Tests must cover both bench route sets with zero mismatches against `bench/refer
 Write these from the [Behaviour contract](#behaviour-contract), not from any implementation. They're an independent check on the router.
 
 1. Move `test/automaton-router.test.ts` into `test/router.test.ts` against `createRouter`, and delete the old file.
-2. Add tests for what's new: D2, D3, D5, recompiling after `on()`, non-ASCII paths, `%` left undecoded, and the priority rules across all four tiers.
+2. Add tests for what's new: D2, D3, D5, D10, D11, recompiling after `on()`, `%` left undecoded, and the priority rules across all four tiers. For D10, include `/café` against `/cafü`, and `.+` against a path holding `\u2028`.
 3. Mark the D6 named-groups test `{ todo: 'WP-9' }`.
 4. Rewrite `test/router-consistency.test.mjs` as the differential test. Compare route and params against `bench/reference.mjs`, keeping the mutations from `prototype/verify.mjs`.
    - Run a 50k-URL sample by default, and everything when `FULL_CORPUS=1`.
    - Include `routes-specific` when present, and print a visible skip message when not. This held-out set caught a real semantic bug in the prototype.
    - Support `DIFF_TARGET=prototype`, which builds the router as `cand.mjs` builds `tail-lazy`.
-5. Add `test/fixtures/routes-overlap.mjs`: a route set where URLs match several routes, covering static against param, param scores, wildcards, and same-language routes with different names. Without this, the differential test can't detect a ranking bug.
+5. Add `test/fixtures/routes-overlap.mjs`: a route set where URLs match several routes, covering static against param, param scores, wildcards, and same-language routes with different names. Without this, the differential test can't detect a ranking bug. Use the route shape from `bench/reference.mjs`. Keep named groups out of its regex routes, because WP-8 returns empty params for them. WP-9 adds a named-group route.
 6. Add a harness self-test: run the differential against a deliberately broken router, with one wrong param and one swapped priority, and require it to fail.
 
 **Done when:**
@@ -629,10 +667,12 @@ Registration order and required ranking never disagree on the two bench route se
 1. Implement `on`: normalize methods and paths, expand patterns with `parsePattern`, and merge variants by `key` across methods.
 2. Implement `compile`: sort variants with `compareRank`, build ASTs, call `buildDfa`, build per-method rows, then `buildTable` and `createMatcher`. Use a `maxStates` of 32,767 for now.
 3. Implement `find`: the `GET` fast path, then the normalizing `Map`. Handle empty paths and a missing leading `/` in `miss`, so the hot loop pays nothing.
-4. Keep every `RegExp` route as a residual route for now: test them in `miss` with `RegExp.test`, in tier and registration order, and deduplicate by source and flags. WP-9 compiles them into the DFA.
-5. Recompile on the next `find` after `on()`.
-6. Replace the prototype imports in the WP-5 and WP-6 tests with the real modules.
-7. If G2's prototype comparison misses, try `new Function` for the hot loop, as the prototype does. Keep it only if it wins by more than 3%.
+4. Keep every `RegExp` route as a residual route for now: test them in `miss` with `RegExp.test`, in tier and registration order, and deduplicate by source and flags. Keep each method's own order, because the old code's shared order disagrees with the reference. WP-9 compiles them into the DFA.
+5. Implement [Non-ASCII paths](#non-ascii-paths) step 4 in `miss`, keeping a per-row candidate list.
+6. Apply D11 when merging by `key`.
+7. Recompile on the next `find` after `on()`.
+8. Replace the prototype imports in the WP-5 and WP-6 tests with the real modules.
+9. If G2's prototype comparison misses, try `new Function` for the hot loop, as the prototype does. Keep it only if it wins by more than 3%.
 
 **Done when:**
 
@@ -659,7 +699,7 @@ All tests pass except the `todo`, and the differential shows 0 mismatches on all
 2. Keep the priority order: compiled and residual regex routes merge by registration order within a tier. Where a residual route could outrank a compiled one, set that `rows` entry to -1, so that `miss` decides.
 3. Filter residual routes with the literal prefix (`extractRegexLiteralPrefix` in `git show c53789e:src/index.ts`).
 4. Clone regexes without `g` and `y`, because they make `test` stateful.
-5. Expose named groups as params through `exec` on first read (D6), and remove the `todo` from that test.
+5. Expose named groups as params through `exec` on first read (D6), remove the `todo` from that test, and add a named-group route to `routes-overlap`.
 6. Compile each route alone first, and demote any route over a per-route state limit to residual. Start at 4,096 states, which handles the crafted `[ab]*a[ab]{14}` case.
 7. If the whole table exceeds `maxStates`, throw an error naming the routes responsible. This is the shipped behaviour unless WP-10 is a go.
 8. Add a way to see how many routes were demoted, because residual routes keep backtracking and ReDoS exposure.
@@ -795,3 +835,5 @@ The lead records every gate and merge here.
 
 | Date | Step | Commit | Router ops/s | medley ops/s | Ratio | Hit rate | Notes |
 |---|---|---|---:|---:|---:|---:|---|
+| 2026-10-30 | WP-0 | 0cf2fa6 | | | | | Agent worktrees start from `main`, so agents fast-forward first |
+| 2026-10-30 | WP-1 | 162eede | | | | | 40 reference tests; 18 injected bugs caught; rulings D10 and D11 added after review |

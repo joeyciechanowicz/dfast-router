@@ -5,7 +5,11 @@ export const NON_ASCII = 128;
 export const SLASH = 47;
 export const QMARK = 63;
 
-/** Membership per symbol, 0 or 1. Never contains QMARK, because `?` ends the path. */
+/**
+ * Membership per symbol, 0 or 1. Never contains QMARK, because `?` ends the path.
+ * NON_ASCII is 1 if the set holds any code unit above ASCII, so a set is exact on ASCII
+ * and may over-accept above it. See "Non-ASCII paths" in PLAN.md.
+ */
 export type CharSet = Uint8Array;
 
 export type Ast =
@@ -72,5 +76,8 @@ export interface Results {
   prebuilt: (RouteMatch | null)[];  // frozen result when there are no params
 }
 
-/** Called when the DFA gives no direct result. `row` is -1 if no state accepted. */
+/**
+ * Called when the DFA gives no direct result, and always for a path holding a non-ASCII
+ * character. `row` is the final state's accept row, or -1 if it has none.
+ */
 export type Miss = (path: string, method: number, end: number, row: number) => RouteMatch | null;
