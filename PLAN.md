@@ -1,13 +1,8 @@
 # Plan: table-driven DFA router
 
-Replace the deleted router in `src/` with one DFA compiled from the whole route table, run from a typed-array table. The work is split into 13 work packages for a lead and up to 6 parallel agents.
+Replace the deleted router in `src/` with one DFA compiled from the whole route table, run from a typed-array table. The work is split into 13 work packages, done one at a time in a single session.
 
-**Status:** planned. Nothing is implemented in `src/`. The working prototype is in `prototype/` (see [Prototype](#prototype)).
-
-**How to use this document**
-
-- **Lead:** the session coordinating the work. Follow [Execution](#execution) from WP-0, and keep the [progress log](#progress-log) up to date.
-- **Agent:** read the sections named in the [prompt template](#agent-prompt-template), then do only your work package.
+**Status:** in progress. See the [progress log](#progress-log). The working prototype is in `prototype/` (see [Prototype](#prototype)).
 
 ## Goal
 
@@ -186,7 +181,7 @@ The prototype throws on case 4.
 
 ## Shared contracts
 
-Parallel agents code against these. WP-1 writes them into `src/compiler/types.ts`, `src/types.ts`, and stub modules. **After WP-1 they are frozen.** See [Changing a contract](#changing-a-contract).
+These are the interfaces between modules, in `src/compiler/types.ts` and `src/types.ts`. Change the code and this section together.
 
 `src/types.ts`:
 
@@ -329,123 +324,39 @@ export function createRouter(): Router;
 
 ## Execution
 
-```
-WP-0 → WP-1 → { WP-2  WP-3  WP-4  WP-5  WP-6  WP-7 } → G1 → WP-8 → G2 → { WP-9  WP-10 } → G3 → WP-11 → G4 → WP-12
-```
-
-| Wave | Packages | Who | Mode | Timing allowed? |
-|---|---|---|---|---|
-| 0 | WP-0 Preflight | Lead | Serial | No |
-| 1 | WP-1 Foundation | 1 agent | Serial | No |
-| 2 | WP-2 to WP-7 | 6 agents | **Parallel** | **No** |
-| | **G1** | Lead | Machine idle | Yes |
-| 3 | WP-8 Integration | 1 agent | Serial | Yes |
-| | **G2** | Lead | Machine idle | Yes |
-| 4 | WP-9, WP-10 | 2 agents | **Parallel** | **No** |
-| | **G3** | Lead | Machine idle | Yes |
-| 5 | WP-11 Tuning | 1 agent | Exclusive | Yes |
-| | **G4** | Lead | Machine idle | Yes |
-| 6 | WP-12 Docs | 1 agent | Serial | No |
-
-### Why it's organized this way
-
-These limits were measured on this repo and machine (Apple M1 Pro, 6 performance and 2 efficiency cores, 16GB RAM).
-
-**Timing happens only at gates.** The same code, timed with other work running:
-
-| Background load | Median | Distortion |
-|---|---:|---:|
-| Idle | 47.3ns | none |
-| 3 busy processes | 49.3ns | +4% |
-| 6 busy processes | 52.9ns | +12% |
-| 8 busy processes | 66.9ns | +41% |
-
-Idle runs alone span 47–51ns, and the gates have margins of about 5%, so a number taken during a parallel wave means nothing.
-
-**At most 6 agents run at once.** That matches the performance cores. A process that loads the corpus peaks at about 800MB, so memory isn't the limit.
-
-**A fresh worktree is not usable as it stands.** The Agent tool creates it from `main`, so the plan and prototype are missing until it fast-forwards to `dfa-router`. `node_modules`, `dist/`, and `bench/routes-specific*` are git-ignored, and uncommitted files aren't there either. `scripts/setup-worktree.sh` fixes the ignored files. Without WP-0's `.gitignore` change, a symlinked `node_modules` shows as untracked, and `git add -A` would commit it.
-
-**`npm test` is off limits during parallel waves.** It matches everything under `test/`, including `test/router-consistency.test.mjs` and its 3M-URL corpus. Agents run only their own test files.
-
-### Rules for every agent
-
-1. Work only in your worktree. Start with `git merge --ff-only dfa-router`, then `bash scripts/setup-worktree.sh`.
-2. Edit only the files your package owns. New test files in your owned paths are fine.
-3. Do not edit `src/compiler/types.ts`, `src/types.ts`, or `prototype/`, unless your package says so.
-4. Do not edit a stub another package owns, even to make something compile. If you need it, follow [Changing a contract](#changing-a-contract).
-5. Do not run timing benchmarks, and do not report speed, during a parallel wave. Compile-time checks with a wide margin are allowed where a package says so.
-6. Do not run `npm test` during a parallel wave. Run the commands in your package.
-7. Never weaken, skip, or delete a test or gate to make it pass. Report the failure instead.
-8. Commit on your branch only. The lead merges.
-9. Follow `AGENTS.md` for any performance change. WP-2 to WP-7 are new code, so their speed is judged at G1 and G2, not per commit.
-
-### Agent prompt template
-
-Start each agent with `subagent_type: "general-purpose"` and `isolation: "worktree"`. These worktrees start from `main`, not the current branch, so the prompt's first step fast-forwards to `dfa-router`. Agents start with no context, so the prompt has to carry everything:
+Packages run strictly one at a time, in the main checkout on `dfa-router`, with no subagents or worktrees. Parallel work was tried and stopped: the partial work from WP-2 to WP-7 is carried into the packages below.
 
 ```
-You are implementing {WP} of the balancing-router DFA plan, in your own git worktree.
-Other agents may be working at the same time on other files.
-
-1. Run `git merge --ff-only dfa-router`, then `bash scripts/setup-worktree.sh`.
-   Stop if either fails.
-2. Read AGENTS.md, then these PLAN.md sections: Decisions, Behaviour contract,
-   Architecture, Shared contracts, Rules for every agent, and {WP}.
-3. Do {WP}. Port from prototype/ where the plan says to. Its behaviour is the
-   starting point, except where the Behaviour contract says otherwise.
-4. Run every command under "Done when", and fix what fails.
-5. Commit on your branch.
-
-End with this report, and paste real command results. Do not summarize from memory:
-
-WP:
-Status: done | blocked
-Commits:
-Files changed:
-Commands run, with pass/fail counts:
-Contract changes needed: none | <what and why>
-Deviations from the plan: none | <what and why>
-Open issues:
+WP-0 → WP-1 → WP-3 → WP-4 → WP-5 → WP-6 → WP-2 → G1 → WP-7 → WP-8 → G2 → WP-9 → WP-10 → G3 → WP-11 → G4 → WP-12
 ```
 
-Send follow-up fixes to the same agent with `SendMessage`, because a new agent would start cold. An agent that stopped without committing has lost its worktree, because unchanged worktrees are deleted, so start a new agent instead.
+The order follows real dependencies, so each package builds on the finished one before it rather than on a stand-in.
 
-### Merging
+For each package:
 
-The lead merges each package into `dfa-router` after checking it independently. Do not rely on an agent's report alone.
+1. Read its section, and make one focused change at a time.
+2. Run every command under "Done when" and read the output. Do not assume a pass.
+3. Commit it, with its number in the message, then update the [progress log](#progress-log).
+4. If a contract has to change, change `src/compiler/types.ts` and this document together, and note why.
 
-```bash
-git diff --name-only dfa-router...<branch>   # every file must be owned by that package
-git merge --no-ff <branch>
-npm run build
-# then re-run that package's "Done when" commands
-```
+Rules that still apply:
 
-Ownership is disjoint within each wave, so merges in a wave should not conflict, and any order works. A conflict means a package left its files, so send it back. Run `/code-review high` before merging WP-3, WP-4, WP-6, and WP-8, where subtle errors would be hardest to find later.
-
-### Changing a contract
-
-Contract problems are expected, but silent drift between agents is what makes parallel work fail.
-
-1. The agent stops and reports the change it needs, under `Contract changes needed`. It does not work around it.
-2. The lead edits the contract in `dfa-router`, and updates this document.
-3. The lead tells every running agent affected, using `SendMessage`, to merge the change.
+- **Never weaken, skip, or delete a test or gate to make it pass.** If a gate fails, stop there, profile, and fix it.
+- **`npm test` matches everything under `test/`,** including the 3M-URL differential, so run only the package's own test files until WP-8.
+- **Follow `AGENTS.md` for performance changes:** profile first, change one thing, run `npm run bench:compare`, and keep only wins. WP-11 is where this applies in full.
+- **Keep timing honest.** Other work on the machine distorts timing (same code: idle 47.3ns, 3 busy processes +4%, 6 +12%, 8 +41%), and idle runs alone span 47–51ns. Run timing only with nothing else running, with the 1-minute load in `uptime` under 2, and compare variants in a fixed rotation.
 
 ### Running a gate
 
-1. Confirm that no agents are running, and that the 1-minute load in `uptime` is under 2. Remove finished worktrees with `git worktree remove`, because `.claude/worktrees/` sits inside the repo.
-2. Check out `dfa-router` in the main checkout, then run `npm run build`.
-3. Run the gate. Use `npm run bench:compare`, or `bench/bench.mjs` with best of 3 seeds at 3s each, so that numbers stay comparable with the tables here.
-4. Add the numbers to the [progress log](#progress-log).
-
-If a gate fails, stop the plan there. Profile, fix, and re-run. Do not start the next wave, and do not lower the gate.
+1. Run `npm run build`.
+2. Run the gate. Use `npm run bench:compare`, or `bench/bench.mjs` with best of 3 seeds at 3s each, so that numbers stay comparable with the tables here.
+3. Add the numbers to the [progress log](#progress-log).
 
 ## Work packages
 
 ### WP-0: Preflight
 
-**Who:** lead. **Depends on:** the user's go-ahead to commit. **Owns:** `.gitignore`, `scripts/setup-worktree.sh`.
+**Owns:** `.gitignore`, `scripts/setup-worktree.sh`.
 
 1. Create the branch: `git switch -c dfa-router`.
 2. In `.gitignore`, change `node_modules/` (line 41) to `node_modules`, so a symlink also matches.
@@ -477,9 +388,7 @@ If a gate fails, stop the plan there. Profile, fix, and re-run. Do not start the
 
 ### WP-1: Foundation
 
-**Who:** 1 agent. **Depends on:** WP-0. **Owns:** `src/index.ts`, `src/types.ts`, `src/medley-router.ts`, `src/router.ts`, `src/matcher.ts`, `src/match.ts`, `src/compiler/*`, `bench/reference.mjs`, `test/reference.test.mjs`.
-
-Everything in Wave 2 fans out from this, so keep it small and exact.
+**Depends on:** WP-0. **Owns:** `src/index.ts`, `src/types.ts`, `src/medley-router.ts`, `src/router.ts`, `src/matcher.ts`, `src/match.ts`, `src/compiler/*`, `bench/reference.mjs`, `test/reference.test.mjs`.
 
 1. Restore the baseline: `git show c53789e:src/medley-router.ts > src/medley-router.ts`. Its compiled output is byte-identical to the current `dist/medley-router.js`.
 2. Write `src/types.ts` and `src/compiler/types.ts` exactly as in [Shared contracts](#shared-contracts).
@@ -499,7 +408,7 @@ npm run build
 npx tsx --test test/reference.test.mjs
 ```
 
-`bench.mjs` will fail until WP-2 merges, because its validation calls the stubbed `createRouter`. That's expected. **The lead reviews both type files line by line against this plan before starting Wave 2.**
+`bench.mjs` will fail until WP-2 merges, because its validation calls the stubbed `createRouter`. That's expected.
 
 ### WP-2: Bench harness
 
@@ -562,7 +471,7 @@ The fuzz test generates random regexes and strings, with a fixed seed printed on
 3. Replace Moore minimization with Hopcroft. Moore took about 94s of the 99s on 300 overlapping routes.
 4. Replace the string keys built with `join` in subset construction.
 5. Honour `maxStates`, returning `state-budget` promptly.
-6. Test with a generator that produces each random AST alongside an equivalent regex source. That gives `RegExp` as an oracle without depending on WP-3.
+6. Test with a generator that produces each random AST alongside an equivalent regex source, which gives `RegExp` as an oracle.
 
 **Done when:**
 
@@ -578,7 +487,6 @@ The test must show that:
 - 1000 overlapping routes return `state-budget` in under 20s.
 - 3000 REST routes build in under 2s.
 
-These limits are wide enough to hold during a parallel wave.
 
 ### WP-5: Patterns and extraction
 
@@ -594,8 +502,6 @@ These limits are wide enough to hold during a parallel wave.
    - The 256-variant limit (D9)
 3. Implement the four extraction cases in `extract.ts`, including the `RegExp.exec` case the prototype throws on.
 4. Keep the fast extractors as `new Function`, as in the prototype. Return `null` for variants with no params and no defaults.
-
-Tests may import `parseRegex` from `prototype/rc.mjs` as the `ParseFragment`, because WP-3 isn't merged yet and the AST shape is the same. WP-8 replaces those imports.
 
 **Done when:**
 
@@ -617,7 +523,7 @@ Tests must cover every wildcard and alias row of the contract, and show extracti
 5. Use `Int32Array` for accept data. The prototype's `Int16Array` limits it to 32,767 variants.
 6. Implement [Non-ASCII paths](#non-ascii-paths) steps 2 and 3. Giving `NON_ASCII` its own class may double the table when the class count crosses a power of two. G2 checks whether that costs anything.
 
-In `test/helpers/dfa-fixture.ts`, adapt the prototype's `compile()` output to the `Dfa` contract: `T` to `trans`, `cls` to `classOf`, and `A` to single-entry `accepts`. WP-4 isn't merged yet, and this lets the matcher run on real routes now. WP-8 replaces it.
+Build test fixtures with the real `parsePattern` and `buildDfa`, so the matcher runs on real routes.
 
 **Done when:**
 
@@ -655,16 +561,16 @@ Registration order and required ranking never disagree on the two bench route se
 
 ### G1: Foundations verified
 
-**Lead, machine idle, all of Wave 2 merged.**
+**Machine idle. Runs after WP-2, once the matcher and bench exist.**
 
-- [ ] Every Wave 2 "Done when" command passes on `dfa-router`.
+- [ ] Every "Done when" command so far still passes.
 - [ ] `npm run build` passes with no stubs left except `src/router.ts`.
 - [ ] medley reports about 7M ops/s at about 95% hit rate on generic routes.
 - [ ] Record medley and the prototype (through `prototype/shim-dfa.cjs`) in the progress log, with and without `--read-params`. Earlier numbers don't carry over, because this bench uses fresh strings.
 
 ### WP-8: Router integration
 
-**Who:** 1 agent, with no others running. **Depends on:** G1. **Owns:** `src/router.ts`, `src/index.ts`, and the imports in the WP-5 and WP-6 tests.
+**Depends on:** WP-7. **Owns:** `src/router.ts`, `src/index.ts`.
 
 1. Implement `on`: normalize methods and paths, expand patterns with `parsePattern`, and merge variants by `key` across methods.
 2. Implement `compile`: sort variants with `compareRank`, build ASTs, call `buildDfa`, build per-method rows, then `buildTable` and `createMatcher`. Use a `maxStates` of 32,767 for now.
@@ -673,8 +579,7 @@ Registration order and required ranking never disagree on the two bench route se
 5. Implement [Non-ASCII paths](#non-ascii-paths) step 4 in `miss`, keeping a per-row candidate list.
 6. Apply D11 when merging by `key`.
 7. Recompile on the next `find` after `on()`.
-8. Replace the prototype imports in the WP-5 and WP-6 tests with the real modules.
-9. If G2's prototype comparison misses, try `new Function` for the hot loop, as the prototype does. Keep it only if it wins by more than 3%.
+8. If G2's prototype comparison misses, try `new Function` for the hot loop, as the prototype does. Keep it only if it wins by more than 3%.
 
 **Done when:**
 
@@ -687,7 +592,7 @@ All tests pass except the `todo`, and the differential shows 0 mismatches on all
 
 ### G2: Parity with the prototype
 
-**Lead, machine idle.** Stop here if this fails: every later package builds on it.
+**Machine idle.** Stop here if this fails: every later package builds on it.
 
 - [ ] `balancing-router` is within 5% of the prototype, measured in the same session.
 - [ ] At least 1.9× medley with `--read-params`, and at least 2.5× without, on both route sets. These sit below the prototype's 2.0× and 2.9× because methods add real work.
@@ -710,13 +615,13 @@ All tests pass except the `todo`, and the differential shows 0 mismatches on all
 
 ### WP-10: On-demand states spike
 
-**Depends on:** G2. **Owns:** `src/compiler/lazy-dfa.ts` (new), and may change `src/matcher.ts` and `src/compiler/table.ts`. **Merge only on a go.**
+**Depends on:** WP-9. **Owns:** `src/compiler/lazy-dfa.ts` (new), and may change `src/matcher.ts` and `src/compiler/table.ts`. **Do this on a side branch, and merge only on a go.**
 
 Build DFA states on first use, as RE2 does. Unbuilt transitions hold a sentinel above `stop`, so the hot loop is unchanged. Traffic touched only 6.6% of states in the 300-route overlap case, which is why this looks promising, but it's unbuilt and unproven.
 
-**Done when** the agent reports a working spike, plus a test of URLs crafted to force new states, and memory bounded by a fixed cap with a flush when full.
+**Done when** there's a working spike, plus a test of URLs crafted to force new states, and memory bounded by a fixed cap with a flush when full.
 
-The lead decides go or no-go at G3. Go only if all of these hold:
+Decide go or no-go at G3. Go only if all of these hold:
 
 - Lookups in the overlap case are within 2× of the eager table.
 - Memory stays under the cap, including under the adversarial test. State building happens at request time, so it adds an attack surface.
@@ -724,7 +629,7 @@ The lead decides go or no-go at G3. Go only if all of these hold:
 
 ### G3: Feature complete
 
-**Lead, machine idle, WP-9 merged.**
+**Machine idle.**
 
 - [ ] All contract tests pass, and regex fuzz shows 0 mismatches.
 - [ ] A router with no residual routes shows no slowdown against G2.
@@ -733,7 +638,7 @@ The lead decides go or no-go at G3. Go only if all of these hold:
 
 ### WP-11: Tuning
 
-**Who:** 1 agent, machine exclusive. **Depends on:** G3. **Owns:** anything in `src/`.
+**Depends on:** G3. **Owns:** anything in `src/`.
 
 Follow the `AGENTS.md` workflow exactly: profile first, make one change, run `npm run bench:compare`, keep only wins, and commit each one separately.
 
@@ -741,13 +646,13 @@ Follow the `AGENTS.md` workflow exactly: profile first, make one change, run `np
 2. **Scan threshold.** `scanAfter = 8` came from a small, noisy sweep. Try capping chain states on large tables.
 3. **Wildcards.** Add a fast scan for `[^?]*` states.
 4. **CSP.** Fall back to data-driven extraction when `new Function` throws.
-5. **x86-64.** Every number so far is from one Apple M1 Pro. Re-run on x86-64 Linux, because the mispredict results that drove this design may differ there. This may need a person or CI to provide the machine. If the ranking of table against generated code changes, stop and report.
+5. **x86-64.** Every number so far is from one Apple M1 Pro. Re-run on x86-64 Linux, because the mispredict results that drove this design may differ there. This needs a person or CI to provide the machine. If the ranking of table against generated code changes, stop and report.
 
 **Done when** every item has a measured result in the progress log, including items that produced no win.
 
 ### G4: Acceptance
 
-**Lead, machine idle.** Every row of [Acceptance criteria](#acceptance-criteria) passes, on both route sets.
+**Machine idle.** Every row of [Acceptance criteria](#acceptance-criteria) passes, on both route sets.
 
 ### WP-12: Docs and cleanup
 
@@ -784,9 +689,6 @@ All of these must hold on both route sets, measured against medley given matchab
 
 | Risk | Mitigation |
 |---|---|
-| Timing numbers are corrupted by parallel work | Timing only at gates, on an idle machine |
-| A contract is wrong, and parallel work is wasted | Lead reviews WP-1 line by line; [change process](#changing-a-contract) |
-| Packages pass alone but fail together | WP-5 and WP-6 test against real prototype data; WP-8 runs alone |
 | The router and reference share a ranking bug | Reference imports nothing from `src/`; hand-written priority tests |
 | Wrong ranking passes every bench corpus | `routes-overlap` fixture and a harness self-test (WP-7) |
 | The real router is slower than the prototype, because it adds methods and accept rows | G2, with room left below the prototype's ratios |
@@ -833,7 +735,7 @@ BENCH_ROUTES_MODULE="$PWD/bench/routes-specific.mjs" BENCH_PRECOMPUTED_URLS_MODU
 
 ## Progress log
 
-The lead records every gate and merge here.
+Record every package and gate here.
 
 | Date | Step | Commit | Router ops/s | medley ops/s | Ratio | Hit rate | Notes |
 |---|---|---|---:|---:|---:|---:|---|
