@@ -2,14 +2,16 @@ import { mkset } from './compiler/charset';
 import { buildDfa } from './compiler/dfa';
 import { buildExtractor } from './compiler/extract';
 import { compareRank, parsePattern, variantAst, variantRegExp } from './compiler/pattern';
-import { parseFragment } from './compiler/regex-parser';
+import { parseFragment, parseRegExp } from './compiler/regex-parser';
 import { buildTable } from './compiler/table';
-import type { Ast, DfaInput, Miss, Parsed, Results, Variant } from './compiler/types';
+import type { Ast, DfaInput, Extractor, Miss, Parsed, Results, Variant } from './compiler/types';
 import { Match, prebuiltMatch } from './match';
 import { createMatcher } from './matcher';
 import type { RouteHandler, RouteMatch } from './types';
 
 const MAX_STATES = 32_767;
+/** A route needing more than this alone is left out of the DFA, so one can't use up the table. */
+const ROUTE_STATE_LIMIT = 4_096;
 const SCAN = { scanAfter: 8, scanRun: 8 };
 const ANY_METHOD = '*';
 
@@ -23,11 +25,19 @@ interface Target {
 
 interface PatternEntry extends Target {
   variant: Variant;
+  path: string;
 }
 
-interface RegexEntry {
+interface RegexEntry extends Target {
   regex: RegExp;
-  match: RouteMatch;
+}
+
+/** A regex route for one method, in the order `miss` tries them. */
+interface RegexCandidate {
+  regex: RegExp;
+  result: number;
+  tag: number; // -1 for a residual route, which the DFA knows nothing about
+  prefix: string;
 }
 
 /** What a compiled table needs from `find`. */
@@ -35,6 +45,7 @@ interface Compiled {
   match: (path: string, method: number) => RouteMatch | null;
   methodIds: Map<string, number>;
   get: number;
+  residual: string[];
 }
 
 function normalizeMethod(method: string): string {
@@ -62,12 +73,11 @@ export class Router {
     const methods = [method].flat().map(normalizeMethod);
     if (path instanceof RegExp) {
       const regex = statelessCopy(path);
-      const match = prebuiltMatch(handler, store);
-      for (const m of methods) addTo(this.regexes, m, regexKey(regex), { regex, match });
+      for (const m of methods) addTo(this.regexes, m, regexKey(regex), { regex, handler, store });
     } else {
       const variants = parsePattern(path);
       for (const m of methods) {
-        for (const variant of variants) addTo(this.patterns, m, variant.key, { variant, handler, store });
+        for (const variant of variants) addTo(this.patterns, m, variant.key, { variant, path, handler, store });
       }
     }
     this.compiled = null;
@@ -85,6 +95,11 @@ export class Router {
     this.build();
   }
 
+  /** Routes not fully compiled into the DFA. They run `RegExp`, so they can backtrack. */
+  residual(): string[] {
+    return (this.compiled ?? this.build()).residual;
+  }
+
   private build(): Compiled {
     const compiled = compileRoutes(this.patterns, this.regexes);
     this.compiled = compiled;
@@ -100,6 +115,52 @@ export function createRouter(): Router {
   return new Router();
 }
 
+const fitsAlone = (ast: Ast): boolean => buildDfa([{ ast, tag: 0 }], { maxStates: ROUTE_STATE_LIMIT }).ok;
+
+/**
+ * Text every match of `regex` starts with, or '' if that can't be known. Only a filter for residual
+ * routes, so it stops early whenever it's unsure: before a quantifier, or at any `|` or `i` flag.
+ */
+function literalPrefix(regex: RegExp): string {
+  const { source } = regex;
+  if (source[0] !== '^' || source.includes('|') || regex.ignoreCase) return '';
+  let prefix = '';
+  for (let i = 1; i < source.length; i += 1) {
+    let c = source[i];
+    if (c === '\\') {
+      if (i + 1 === source.length || /[a-zA-Z0-9]/.test(source[i + 1])) break;
+      i += 1;
+      c = source[i];
+    } else if ('[](){}.*+?|$^'.includes(c)) break;
+    if ('*+?{'.includes(source[i + 1] ?? '')) break;
+    prefix += c;
+  }
+  return prefix;
+}
+
+/** Named groups as params (D6). Numbered groups stay unexposed. */
+function regexExtractor(regex: RegExp): Extractor | null {
+  if (!/\(\?<(?![=!])/.test(regex.source)) return null;
+  return (path, end) => {
+    const params: Record<string, string> = {};
+    const groups = regex.exec(path.slice(0, end))?.groups ?? {};
+    for (const [name, value] of Object.entries(groups)) if (value !== undefined) params[name] = value;
+    return params;
+  };
+}
+
+/** Finds where a table goes over budget, so the error can name a route. Each build is bounded. */
+function firstOverBudget(inputs: DfaInput[]): number {
+  let low = 1;
+  let high = inputs.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (buildDfa(inputs.slice(0, middle), { maxStates: MAX_STATES }).ok) low = middle + 1;
+    else high = middle;
+  }
+  return low - 1;
+}
+
 function compileRoutes(
   patterns: Map<string, Map<string, PatternEntry>>,
   regexes: Map<string, Map<string, RegexEntry>>,
@@ -111,65 +172,120 @@ function compileRoutes(
   }
   const methodBits = 32 - Math.clz32(methodIds.size - 1);
   const names = [...methodIds.keys()];
+  const tiersOf = (m: number): string[] => (m === 0 ? [ANY_METHOD] : [names[m], ANY_METHOD]);
 
-  // One tag per distinct variant, across methods.
+  // One tag per distinct variant across methods, then one per regex route that compiles.
   const tags = new Map<string, number>();
   const variants: Variant[] = [];
+  const labels: string[] = [];
   for (const entries of patterns.values()) {
-    for (const { variant } of entries.values()) {
+    for (const { variant, path } of entries.values()) {
       if (tags.has(variant.key)) continue;
       tags.set(variant.key, variants.length);
       variants.push(variant);
+      labels.push(path);
     }
   }
 
-  const regexOf: (RegExp | null)[] = variants.map(() => null);
-  const exactRegex = (tag: number): RegExp => (regexOf[tag] ??= variantRegExp(variants[tag]));
+  const exactRegexes: (RegExp | null)[] = variants.map(() => null);
+  const exactRegex = (tag: number): RegExp => (exactRegexes[tag] ??= variantRegExp(variants[tag]));
+  const confirms: boolean[] = variants.map(() => false);
 
-  const confirms = new Uint8Array(variants.length);
+  const fragments = new Map<string, Parsed>();
+  const compilable = (source: string): Parsed => {
+    let parsed = fragments.get(source);
+    if (parsed === undefined) {
+      parsed = parseFragment(source);
+      if (parsed.ok && !fitsAlone(parsed.ast)) parsed = { ok: false, reason: 'too many DFA states' };
+      fragments.set(source, parsed);
+    }
+    return parsed;
+  };
+
   const inputs: DfaInput[] = variants.map((variant, tag) => {
     const lenient = (source: string): Parsed => {
-      const parsed = parseFragment(source);
+      const parsed = compilable(source);
       if (parsed.ok) return parsed;
-      confirms[tag] = 1;
+      confirms[tag] = true;
       exactRegex(tag); // throws now if the regex is invalid, not on some later request
       return { ok: true, ast: ANY_TEXT, names: [] };
     };
     const parsed = variantAst(variant, lenient);
-    if (!parsed.ok) throw new Error(`Can't compile route: ${parsed.reason}`);
+    if (!parsed.ok) throw new Error(`Can't compile route ${labels[tag]}: ${parsed.reason}`);
     return { ast: parsed.ast, tag };
   });
 
+  const residual = labels.filter((_, tag) => confirms[tag]);
+  const regexTags = new Map<string, number>();
+  for (const entries of regexes.values()) {
+    for (const [key, { regex }] of entries) {
+      if (regexTags.has(key)) continue;
+      const parsed = parseRegExp(regex);
+      if (parsed.ok && fitsAlone(parsed.ast)) {
+        const tag = labels.length;
+        regexTags.set(key, tag);
+        labels.push(String(regex));
+        exactRegexes[tag] = regex;
+        confirms[tag] = false;
+        inputs.push({ ast: parsed.ast, tag });
+      } else {
+        regexTags.set(key, -1);
+        residual.push(String(regex));
+      }
+    }
+  }
+
   const built = buildDfa(inputs, { maxStates: MAX_STATES });
-  if (!built.ok) throw new Error(`Routes need more than ${MAX_STATES} DFA states`);
+  if (!built.ok) {
+    const fit = firstOverBudget(inputs);
+    throw new Error(
+      `Routes need more than ${MAX_STATES} DFA states: ${fit} of ${inputs.length} fit, and ${labels[inputs[fit].tag]} goes over`,
+    );
+  }
   const { dfa } = built;
 
-  // Results, one per registered (variant, method). Ties follow each method's own order, so each
-  // method ranks its variants separately.
+  // Results, one per registered (route, method).
   const results: Results = { rows: new Int32Array(0), methodBits, handlers: [], stores: [], extractors: [], prebuilt: [] };
-  const tagOfResult: number[] = [];
+  const addResult = ({ handler, store }: Target, extractor: Extractor | null): number => {
+    results.handlers.push(handler);
+    results.stores.push(store);
+    results.extractors.push(extractor);
+    results.prebuilt.push(extractor === null ? prebuiltMatch(handler, store) : null);
+    return results.handlers.length - 1;
+  };
+
+  // Ties follow each method's own order, so each method ranks its variants separately.
   const extractorOf = variants.map((variant) => buildExtractor(variant, parseFragment));
   const ranked = new Map<string, { result: number; priority: number }[]>();
+  const tagOfResult = new Map<number, number>();
   for (const [method, entries] of patterns) {
     const sorted = [...entries.values()].sort((a, b) => compareRank(a.variant, b.variant));
     const byTag: { result: number; priority: number }[] = [];
-    sorted.forEach(({ variant, handler, store }, priority) => {
-      const tag = tags.get(variant.key) as number;
-      const extractor = extractorOf[tag];
-      const result = results.handlers.length;
-      results.handlers.push(handler);
-      results.stores.push(store);
-      results.extractors.push(extractor);
-      results.prebuilt.push(extractor === null ? prebuiltMatch(handler, store) : null);
-      tagOfResult.push(tag);
+    sorted.forEach((entry, priority) => {
+      const tag = tags.get(entry.variant.key) as number;
+      const result = addResult(entry, extractorOf[tag]);
+      tagOfResult.set(result, tag);
       byTag[tag] = { result, priority };
     });
     ranked.set(method, byTag);
   }
 
-  // A row per distinct accept set. `candidates` keeps every result in priority order for `miss`.
+  const regexByMethod = new Map<string, RegexCandidate[]>();
+  for (const [method, entries] of regexes) {
+    const list: RegexCandidate[] = [];
+    for (const [key, entry] of entries) {
+      const result = addResult(entry, regexExtractor(entry.regex));
+      list.push({ regex: entry.regex, result, tag: regexTags.get(key) as number, prefix: literalPrefix(entry.regex) });
+    }
+    regexByMethod.set(method, list);
+  }
+  const regexTiers = names.map((_, m) => tiersOf(m).flatMap((name) => regexByMethod.get(name) ?? []));
+  const hasResidual = regexTiers.map((tier) => tier.some((candidate) => candidate.tag < 0));
+  const anyResidual = hasResidual.includes(true);
+
+  // A row per distinct accept set.
   const rowIds = new Map<string, number>();
-  const rowTags: Int32Array[] = [];
+  const rowTags: Set<number>[] = [];
   const rowOf = new Int32Array(dfa.states).fill(-1);
   dfa.accepts.forEach((accepted, state) => {
     if (accepted === null) return;
@@ -178,18 +294,19 @@ function compileRoutes(
     if (row === undefined) {
       row = rowTags.length;
       rowIds.set(key, row);
-      rowTags.push(accepted);
+      rowTags.push(new Set(accepted));
     }
     rowOf[state] = row;
   });
 
+  // `rows` holds a result only where it's certain. Otherwise `miss` works through the candidates.
   results.rows = new Int32Array(rowTags.length << methodBits).fill(-1);
-  const candidates: Int32Array[] = new Array(rowTags.length << methodBits);
+  const patternCandidates: Int32Array[] = new Array(rowTags.length << methodBits);
   rowTags.forEach((accepted, row) => {
-    names.forEach((name, m) => {
+    names.forEach((_, m) => {
       const list: number[] = [];
-      for (const tierName of m === 0 ? [ANY_METHOD] : [name, ANY_METHOD]) {
-        const byTag = ranked.get(tierName);
+      for (const name of tiersOf(m)) {
+        const byTag = ranked.get(name);
         if (byTag === undefined) continue;
         const inTier: { result: number; priority: number }[] = [];
         for (const tag of accepted) if (byTag[tag] !== undefined) inTier.push(byTag[tag]);
@@ -197,22 +314,23 @@ function compileRoutes(
         for (const { result } of inTier) list.push(result);
       }
       const index = (row << methodBits) + m;
-      candidates[index] = Int32Array.from(list);
-      if (list.length > 0 && confirms[tagOfResult[list[0]]] === 0) results.rows[index] = list[0];
+      patternCandidates[index] = Int32Array.from(list);
+      if (list.length > 0) {
+        if (!confirms[tagOfResult.get(list[0]) as number]) results.rows[index] = list[0];
+      } else if (!hasResidual[m]) {
+        const first = regexTiers[m].find((candidate) => accepted.has(candidate.tag));
+        if (first !== undefined) results.rows[index] = first.result;
+      }
     });
   });
 
-  // The regex tiers, for each method: its own routes, then those for `*`.
-  const regexTiers = names.map((name, m) => {
-    const tiers = m === 0 ? [ANY_METHOD] : [name, ANY_METHOD];
-    return tiers.flatMap((tierName) => [...(regexes.get(tierName)?.values() ?? [])]);
-  });
-  const anyRegex = regexTiers.some((tier) => tier.length > 0);
+  const resultAt = (r: number, path: string, end: number): RouteMatch =>
+    results.prebuilt[r] ?? new Match(results.handlers[r], results.stores[r], results.extractors[r]!, path, end);
 
   const miss: Miss = (path, method, end, row) => {
     const code = path.length === 0 ? 0 : path.charCodeAt(0);
     if (code !== 47) return match(`/${path}`, method);
-    if (row < 0 && !anyRegex) return null;
+    if (row < 0 && !anyResidual) return null;
 
     let stop = end;
     if (stop < 0) {
@@ -221,21 +339,22 @@ function compileRoutes(
     }
     const exactPath = path.slice(0, stop);
     if (row >= 0) {
-      const list = candidates[(row << methodBits) + method];
+      const list = patternCandidates[(row << methodBits) + method];
       for (let i = 0; i < list.length; i += 1) {
-        const r = list[i];
-        if (!exactRegex(tagOfResult[r]).test(exactPath)) continue;
-        return results.prebuilt[r] ?? new Match(results.handlers[r], results.stores[r], results.extractors[r]!, path, stop);
+        if (exactRegex(tagOfResult.get(list[i]) as number).test(exactPath)) return resultAt(list[i], path, stop);
       }
     }
+    // A compiled regex outside the row can't match, because the DFA never under-accepts.
     const tier = regexTiers[method];
     for (let i = 0; i < tier.length; i += 1) {
-      if (tier[i].regex.test(exactPath)) return tier[i].match;
+      const { regex, result, tag, prefix } = tier[i];
+      const possible = tag < 0 ? exactPath.startsWith(prefix) : row >= 0 && rowTags[row].has(tag);
+      if (possible && regex.test(exactPath)) return resultAt(result, path, stop);
     }
     return null;
   };
 
   const table = buildTable(dfa, rowOf, SCAN);
   const match = createMatcher(table, results, miss);
-  return { match, methodIds, get: methodIds.get('GET') ?? 0 };
+  return { match, methodIds, get: methodIds.get('GET') ?? 0, residual };
 }

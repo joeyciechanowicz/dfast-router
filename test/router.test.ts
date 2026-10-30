@@ -330,7 +330,7 @@ test('static results are shared and frozen (D5)', () => {
   assert.ok(Object.isFrozen(a?.params));
 });
 
-test('regex routes expose named groups as params (D6)', { todo: 'WP-9' }, () => {
+test('regex routes expose named groups as params (D6)', () => {
   const router = createRouter();
   router.on('GET', /^\/orders\/(?<id>\d+)$/, noop).on('GET', /^\/users\/(\d+)$/, noop);
   assert.deepEqual({ ...router.find('GET', '/orders/7')?.params }, { id: '7' });
@@ -482,4 +482,140 @@ test('an empty path is the root', () => {
 test('an empty router matches nothing', () => {
   assert.equal(createRouter().find('GET', '/'), null);
   assert.equal(createRouter().find('GET', ''), null);
+});
+
+test('regex routes compile into the DFA, and hold their own order against patterns', () => {
+  const router = createRouter();
+  const regex = () => 'regex';
+  router.on('GET', /^\/v\d+\/health$/, regex).on('GET', '/v1/:x', noop);
+  assert.equal(router.residual().length, 0);
+  assert.notEqual(router.find('GET', '/v1/health')?.handler, regex);
+  assert.equal(router.find('GET', '/v2/health')?.handler, regex);
+  assert.equal(router.find('GET', '/vx/health'), null);
+});
+
+test('an unanchored regex can match anywhere in the path', () => {
+  const router = createRouter();
+  router.on('GET', /\.png$/, noop).on('GET', /^\/start/, noop).on('GET', /mid/, noop);
+  assert.equal(router.residual().length, 0);
+  assert.ok(router.find('GET', '/a/b.png?x=1'));
+  assert.ok(router.find('GET', '/start/more'));
+  assert.ok(router.find('GET', '/a/mid/b'));
+  assert.equal(router.find('GET', '/a/b.gif'), null);
+});
+
+test('flags: `i` and `s` compile, and `m` and `u` stay residual but work', () => {
+  const router = createRouter();
+  router.on('GET', /^\/case$/i, noop).on('GET', /^\/dot.x$/s, noop);
+  assert.equal(router.residual().length, 0);
+  assert.ok(router.find('GET', '/CASE'));
+  assert.ok(router.find('GET', '/dot\nx'));
+  const other = createRouter().on('GET', /^\/m$/m, noop).on('GET', /^\/\u{1F600}$/u, noop);
+  assert.equal(other.residual().length, 2);
+  assert.ok(other.find('GET', '/m'));
+  assert.ok(other.find('GET', '/😀'));
+});
+
+test('regexes the DFA cannot hold still work, as residual routes', () => {
+  const router = createRouter();
+  router.on('GET', /^\/back\/(a+)\/\1$/, noop).on('GET', /^\/look\/(?=x)\w+$/, noop);
+  assert.deepEqual(router.residual(), [String(/^\/back\/(a+)\/\1$/), String(/^\/look\/(?=x)\w+$/)]);
+  assert.ok(router.find('GET', '/back/aa/aa'));
+  assert.equal(router.find('GET', '/back/aa/a'), null);
+  assert.ok(router.find('GET', '/look/xy'));
+  assert.equal(router.find('GET', '/look/yx'), null);
+});
+
+test('compiled and residual regexes keep registration order, in both directions', () => {
+  const compiled = () => 'compiled';
+  const residual = () => 'residual';
+  const one = createRouter().on('GET', /^\/m\/[a-z]+$/, compiled).on('GET', /^\/m\/(?=a)[a-z]+$/, residual);
+  const two = createRouter().on('GET', /^\/m\/(?=a)[a-z]+$/, residual).on('GET', /^\/m\/[a-z]+$/, compiled);
+  assert.equal(one.find('GET', '/m/abc')?.handler, compiled);
+  assert.equal(two.find('GET', '/m/abc')?.handler, residual);
+  assert.equal(two.find('GET', '/m/bcd')?.handler, compiled);
+});
+
+test('a pattern route still beats a residual regex', () => {
+  const pattern = () => 'pattern';
+  const router = createRouter().on('GET', /^\/p\/(?=1)\d+$/, noop).on('GET', '/p/:id#int', pattern);
+  assert.equal(router.find('GET', '/p/123')?.handler, pattern);
+});
+
+test('a residual regex for `*` loses to one for the method', () => {
+  const get = () => 'get';
+  const router = createRouter().on('*', /^\/q\/(?=a).+$/, noop).on('GET', /^\/q\/a(?=b).+$/, get);
+  assert.equal(router.find('GET', '/q/abc')?.handler, get);
+  assert.notEqual(router.find('POST', '/q/abc')?.handler, get);
+});
+
+test('the prefix filter never hides a residual match', () => {
+  const cases: [RegExp, string][] = [
+    [/^\/ab*c(?=$)/, '/ac'],
+    [/^\/a?b(?=$)/, '/b'],
+    [/^\/a{0,2}b(?=$)/, '/b'],
+    [/^\/x(?=$)|^\/y(?=$)/, '/y'],
+    [/^\/X(?=$)/i, '/x'],
+    [/^\/a\/b(?=$)/, '/a/b'],
+    [/^\/a\.b(?=$)/, '/a.b'],
+  ];
+  for (const [regex, path] of cases) {
+    const router = createRouter().on('GET', regex, noop);
+    assert.equal(router.residual().length, 1, String(regex));
+    assert.ok(router.find('GET', path), String(regex));
+  }
+});
+
+test('a residual route is found on a path with a non-ASCII character', () => {
+  const router = createRouter().on('GET', /^\/é(?=x)x$/, noop);
+  assert.ok(router.find('GET', '/éx'));
+  assert.equal(router.find('GET', '/üx'), null);
+});
+
+test('a param regex the DFA cannot hold is confirmed, and keeps its rank', () => {
+  const backref = () => 'backref';
+  const router = createRouter().on('GET', '/a/:x', noop).on('GET', '/a/:v((.)\\2)', backref);
+  assert.deepEqual(router.residual(), ['/a/:v((.)\\2)']);
+  assert.equal(router.find('GET', '/a/zz')?.handler, backref);
+  assert.deepEqual({ ...router.find('GET', '/a/zz')?.params }, { v: 'zz' });
+  assert.notEqual(router.find('GET', '/a/zy')?.handler, backref);
+  assert.ok(router.find('GET', '/a/zy'));
+});
+
+test('an invalid param regex throws before any request', () => {
+  assert.throws(() => createRouter().on('GET', '/a/:v([)', noop).compile());
+});
+
+test('one explosive route is demoted, not fatal', () => {
+  const started = performance.now();
+  const router = createRouter();
+  router.on('GET', '/x/:a([ab]*a[ab]{14})', noop).on('GET', /^\/y\/[ab]*a[ab]{14}$/, noop).on('GET', '/plain', noop);
+  assert.equal(router.residual().length, 2);
+  assert.ok(router.find('GET', `/x/a${'b'.repeat(14)}`));
+  assert.equal(router.find('GET', `/x/b${'b'.repeat(14)}`), null);
+  assert.ok(router.find('GET', `/y/a${'b'.repeat(14)}`));
+  assert.ok(router.find('GET', '/plain'));
+  assert.ok(performance.now() - started < 5_000);
+});
+
+test('a table over budget fails fast, and names a route', () => {
+  let seed = 7;
+  const random = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
+  const words = Array.from({ length: 40 }, (_, i) => `w${i}x${i * 7}`);
+  const router = createRouter();
+  const seen = new Set<string>();
+  while (seen.size < 1500) {
+    let path = '';
+    let param = 0;
+    const depth = 2 + Math.floor(random() * 4);
+    for (let i = 0; i < depth; i += 1) {
+      path += random() < 0.4 ? `/:p${param++}` : `/${words[Math.floor(random() * words.length)]}`;
+    }
+    if (seen.has(path)) continue;
+    seen.add(path);
+    router.on('GET', path, noop);
+  }
+  const started = performance.now();
+  assert.throws(() => router.compile(), /more than 32767 DFA states.*\/.* goes over/);
+  assert.ok(performance.now() - started < 60_000);
 });

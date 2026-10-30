@@ -60,7 +60,15 @@ export const routes = [
   route(/^\/t\/.+\/deep$/, 'GET'),
   route(/^\/t\/x\/.+$/, '*'),
 
-  // Regex tiers go by each method's registration order. No named groups until WP-9 adds them.
+  // Residual regexes merge with compiled ones by registration order.
+  route(/^\/mix\/(?=b)[a-z]+$/, 'GET'),
+  route(/^\/mix\/[a-z]+$/, 'GET'),
+  route(/^\/back\/(a+)\/\1$/, 'GET'),
+
+  // Named groups become params (D6).
+  route(/^\/orders\/(?<id>\d+)$/, 'GET'),
+
+  // Regex tiers go by each method's registration order.
   route(/^\/r\/.*$/, '*'),
   route(/^\/r\/[a-z0-9]+$/, 'GET'),
   route(/^\/r\/\d+$/, 'POST'),
@@ -85,10 +93,11 @@ export const neverWin = [indexOf('/u/:b'), indexOf('/dup/:a'), indexOf(/^\/n\/\d
 const PREFIXES = [
   '', '/items', '/x', '/x/static', '/x/1', '/x/a', '/u', '/dup', '/opt', '/files', '/anon', '/deep',
   '/deep/q', '/foo', '/bar', '/en-GB', '/t', '/t/x', '/r', '/n', '/dot', '/not', '/café', '/cafè', '/cafü',
+  '/mix', '/back', '/orders',
 ];
 const VALUES = [
   '', 'all', '123', 'en-GB', 'abc', 'hello-world', 'hello_world', 'a.b', UUID, 'a/b', 'a/b/c', 'static',
-  'post', 'multi', 'baz', 'home', 'é', 'aéb', 'aüb', 'a b', 'é'.repeat(30), 'a'.repeat(30),
+  'post', 'multi', 'baz', 'home', 'bcd', 'a/a', 'é', 'aéb', 'aüb', 'a\u2028b', 'é'.repeat(30), 'a'.repeat(30),
   `${'a'.repeat(30)}é`,
 ];
 const SUFFIXES = ['', '/', '/b', '/static', '/2', '/deep', '/home', '?q=/x', '/b?x=1'];
