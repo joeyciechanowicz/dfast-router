@@ -26,6 +26,7 @@ export function createMatcher(
   const STOP = table.stop;
   const SCAN = table.scan;
   const RUN = table.scanRun;
+  const TAIL = table.tail;
   const ROW = table.rowOf;
   const RESULT = results.rows;
   const METHOD_BITS = results.methodBits;
@@ -52,8 +53,9 @@ export function createMatcher(
   /**
    * Continues from a scan-band exit at i. It owns the outer loop so that `find` stays one flat loop.
    *
-   * A stop on a non-ASCII character flags the path and steps over it. Any other stop is the end of a
-   * scan chain, so it gallops to the next `/` or `?`. `indexOf` skips characters without looking at
+   * A stop on a non-ASCII character flags the path and steps over it. A tail state can't be left, so it
+   * jumps to the end of the path. Any other stop is the end of a scan chain, so it gallops to the next
+   * `/` or `?`. `indexOf` skips characters without looking at
    * them, so a path about to get an inexact direct result rechecks what was skipped.
    *
    * `?` is searched for at most once: narrowing n to the end of the path means that a path of many
@@ -65,11 +67,19 @@ export function createMatcher(
     let skipped = -1; // where `indexOf` first took over; n is the path's end once this is set
     for (;;) {
       st = x - SCAN;
-      if (s.charCodeAt(i) >= 128) {
-        flagged = true;
-        i += 1;
-      } else {
-        i += 1;
+      const nonAscii = s.charCodeAt(i) >= 128;
+      flagged = flagged || nonAscii;
+      i += 1;
+      if (TAIL[st] === 1) {
+        if (skipped < 0) {
+          skipped = i;
+          const query = s.indexOf('?', i);
+          if (query >= 0) n = query;
+        }
+        i = n;
+        break;
+      }
+      if (!nonAscii) {
         const stop = seek(s, i, n);
         if (stop >= 0) {
           i = stop;

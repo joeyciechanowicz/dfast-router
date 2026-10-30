@@ -264,6 +264,7 @@ export interface Table {
   stop: number;     // x >= stop leaves the hot loop
   scan: number;     // x >= scan continues in slow()
   scanRun: number;  // chars slow() checks by hand before indexOf
+  tail: Uint8Array; // by DFA state: 1 = can't be left, so slow() jumps to the path's end
   rowOf: Int32Array; // table state to accept row, or -1
 }
 

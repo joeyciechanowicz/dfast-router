@@ -13,6 +13,18 @@ function isScanState(dfa: Dfa, state: number): boolean {
 }
 
 /**
+ * A state that loops on everything but `?`, as a wildcard does. It can't be left, so what's after it
+ * makes no difference, and `slow` can jump to the end of the path.
+ */
+function isTailState(dfa: Dfa, state: number): boolean {
+  const row = state * dfa.classes;
+  for (let symbol = 0; symbol < ALPHABET; symbol += 1) {
+    if (symbol !== QMARK && dfa.trans[row + dfa.classOf[symbol]] !== state) return false;
+  }
+  return true;
+}
+
+/**
  * Lays a DFA out for the hot loop. Values in `tt` fall into three bands:
  *
  *   [0, stop)      a table state: DFA states first, then their scan chains
@@ -20,7 +32,7 @@ function isScanState(dfa: Dfa, state: number): boolean {
  *   [scan, ...)    leave for `slow`, which continues from DFA state `x - scan`
  *
  * Entering a scan state walks a chain of `scanAfter` copies of it, so short params stay in the hot
- * loop, and the end of the chain leaves for `slow` to gallop.
+ * loop, and the end of the chain leaves for `slow` to gallop. Entering a tail state leaves at once.
  *
  * `NON_ASCII` has a class of its own, and every transition on it is in the scan band, so the hot loop
  * leaves on the first non-ASCII character without a check of its own. A missing transition stays dead,
@@ -46,9 +58,11 @@ export function buildTable(
   const shift = 32 - Math.clz32(stride - 1);
 
   const scanning = new Uint8Array(states);
+  const tail = new Uint8Array(states);
   const chain = new Int32Array(states);
   let total = states;
   for (let state = 0; state < states; state += 1) {
+    if (isTailState(dfa, state)) tail[state] = 1;
     if (!isScanState(dfa, state)) continue;
     scanning[state] = 1;
     chain[state] = total;
@@ -60,6 +74,7 @@ export function buildTable(
   const tt = scan + states - 1 > 0xffff ? new Uint32Array(total << shift) : new Uint16Array(total << shift);
 
   const enter = (state: number): number => {
+    if (tail[state] === 1) return scan + state;
     if (scanning[state] === 0) return state;
     return scanAfter > 0 ? chain[state] : scan + state;
   };
@@ -88,5 +103,5 @@ export function buildTable(
     }
   }
 
-  return { tt, cls, shift, start: dfa.start, stop: dead, scan, rowOf: tableRowOf, scanRun };
+  return { tt, cls, shift, start: dfa.start, stop: dead, scan, rowOf: tableRowOf, scanRun, tail };
 }

@@ -379,6 +379,26 @@ test('an inexact route on a shared path does not hide an exact one (D10)', () =>
   assert.notEqual(router.find('GET', '/p/aüb')?.handler, plain);
 });
 
+test('a wildcard tail is captured whole, however long, and stops at `?`', () => {
+  const router = createRouter().on('GET', '/static/*', noop).on('GET', '/n/:v([^é]*)', noop);
+  const tail = 'a/b/'.repeat(100);
+  assert.deepEqual({ ...router.find('GET', `/static/${tail}`)?.params }, { '*': tail });
+  assert.deepEqual({ ...router.find('GET', `/static/${tail}?x=/y/z`)?.params }, { '*': tail });
+  assert.deepEqual({ ...router.find('GET', '/static/x')?.params }, { '*': 'x' });
+  assert.deepEqual({ ...router.find('GET', '/static/é')?.params }, { '*': 'é' });
+  assert.deepEqual({ ...router.find('GET', `/static/${tail}é`)?.params }, { '*': `${tail}é` });
+});
+
+test('a tail that over-accepts above ASCII is still confirmed (D10)', () => {
+  const router = createRouter().on('GET', '/n/:v([^é]*)', noop);
+  const long = 'a/'.repeat(50);
+  assert.ok(router.find('GET', `/n/${long}`));
+  assert.ok(router.find('GET', `/n/${long}ü`));
+  assert.equal(router.find('GET', `/n/${long}é`), null);
+  assert.equal(router.find('GET', '/n/é'), null);
+  assert.ok(router.find('GET', `/n/${long}?q=é`));
+});
+
 test('`%` stays undecoded', () => {
   const router = createRouter();
   router.on('GET', '/x/:v', noop);
