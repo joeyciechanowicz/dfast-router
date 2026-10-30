@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createReference } from '../bench/reference.mjs';
 import { createRouter } from '../src/index';
 
 const noop = () => {};
@@ -598,24 +599,48 @@ test('one explosive route is demoted, not fatal', () => {
   assert.ok(performance.now() - started < 5_000);
 });
 
-test('a table over budget fails fast, and names a route', () => {
+function overlappingPaths(count: number): string[] {
   let seed = 7;
   const random = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
-  const words = Array.from({ length: 40 }, (_, i) => `w${i}x${i * 7}`);
-  const router = createRouter();
+  const words = Array.from({ length: Math.round(Math.sqrt(count)) }, (_, i) => `w${i}x${i * 7}`);
   const seen = new Set<string>();
-  while (seen.size < 1500) {
+  while (seen.size < count) {
     let path = '';
     let param = 0;
     const depth = 2 + Math.floor(random() * 4);
     for (let i = 0; i < depth; i += 1) {
       path += random() < 0.4 ? `/:p${param++}` : `/${words[Math.floor(random() * words.length)]}`;
     }
-    if (seen.has(path)) continue;
     seen.add(path);
-    router.on('GET', path, noop);
   }
+  return [...seen];
+}
+
+test('a table over budget fails fast, and names a route', () => {
+  const router = createRouter({ maxStates: 2_000 });
+  for (const path of overlappingPaths(300)) router.on('GET', path, noop);
   const started = performance.now();
-  assert.throws(() => router.compile(), /more than 32767 DFA states.*\/.* goes over/);
-  assert.ok(performance.now() - started < 60_000);
+  assert.throws(() => router.compile(), /more than 2000 DFA states.*\/.* goes over/);
+  assert.ok(performance.now() - started < 5_000);
+});
+
+test('the default budget holds a heavily overlapping table, in a 32-bit table', () => {
+  const paths = overlappingPaths(300);
+  const router = createRouter();
+  paths.forEach((path, route) => router.on('GET', path, noop, { route }));
+  const started = performance.now();
+  router.compile();
+  assert.ok(performance.now() - started < 10_000);
+
+  const reference = createReference(paths.map((path) => ({ concretePaths: [path] })));
+  paths.forEach((path) => {
+    const url = path.replace(/:p\d+/g, (name) => `v${name.slice(2)}`);
+    const want = reference(url);
+    assert.ok(want, url);
+    const match = router.find('GET', url);
+    assert.equal((match?.store as { route: number }).route, want.route, url);
+    assert.deepEqual({ ...match?.params }, want.params, url);
+    const longer = `${url}x/y/z/q/r/s/t`;
+    assert.equal(router.find('GET', longer) === null, reference(longer) === null, longer);
+  });
 });

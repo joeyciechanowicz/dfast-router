@@ -319,7 +319,8 @@ export class Router {
   find(method: string, path: string): RouteMatch | null;
   compile(): void;
 }
-export function createRouter(): Router;
+export interface RouterOptions { maxStates?: number } // default 262,144
+export function createRouter(options?: RouterOptions): Router;
 ```
 
 `Router.residual(): string[]` lists the routes not fully compiled into the DFA, which keep backtracking exposure (WP-9).
@@ -329,8 +330,10 @@ export function createRouter(): Router;
 Packages run strictly one at a time, in the main checkout on `dfa-router`, with no subagents or worktrees. Parallel work was tried and stopped: the partial work from WP-2 to WP-7 is carried into the packages below.
 
 ```
-WP-0 → WP-1 → WP-3 → WP-4 → WP-5 → WP-6 → WP-2 → G1 → WP-7 → WP-8 → G2 → WP-9 → WP-10 → G3 → WP-11 → G4 → WP-12
+WP-0 → WP-1 → WP-3 → WP-4 → WP-5 → WP-6 → WP-2 → G1 → WP-7 → WP-8 → G2 → WP-9 → G3 → WP-11 → G4 → WP-12
 ```
+
+WP-10 was dropped, on evidence from WP-9. See [its section](#wp-10-on-demand-states-spike).
 
 The order follows real dependencies, so each package builds on the finished one before it rather than on a stand-in.
 
@@ -610,7 +613,7 @@ All tests pass except the `todo`, and the differential shows 0 mismatches on all
 4. Clone regexes without `g` and `y`, because they make `test` stateful.
 5. Expose named groups as params through `exec` on first read (D6), remove the `todo` from that test, and add a named-group route to `routes-overlap`.
 6. Compile each route alone first, and demote any route over a per-route state limit to residual. Start at 4,096 states, which handles the crafted `[ab]*a[ab]{14}` case.
-7. If the whole table exceeds `maxStates`, throw an error naming the routes responsible. This is the shipped behaviour unless WP-10 is a go.
+7. If the whole table exceeds `maxStates`, throw an error naming the route that goes over.
 8. Add a way to see how many routes were demoted, because residual routes keep backtracking and ReDoS exposure.
 
 **Done when:** `npm test` and `FULL_CORPUS=1 npm run test:consistency` pass with no `todo` left, and a test shows that a pathological route set fails or demotes rather than hanging.
@@ -618,6 +621,8 @@ All tests pass except the `todo`, and the differential shows 0 mismatches on all
 ### WP-10: On-demand states spike
 
 **Depends on:** WP-9. **Owns:** `src/compiler/lazy-dfa.ts` (new), and may change `src/matcher.ts` and `src/compiler/table.ts`. **Do this on a side branch, and merge only on a go.**
+
+**Decision: not built.** Its case was that 300 overlapping routes took 99s and 1000 didn't finish. With Hopcroft, those take 0.7s and 28s, so raising the eager budget to 262,144 states (`RouterOptions.maxStates`) covers the realistic range, and past that the router fails fast and names a route. Building states at request time would add an attack surface for route tables nobody is known to have. The rest of this section records the design, in case that changes.
 
 Build DFA states on first use, as RE2 does. Unbuilt transitions hold a sentinel above `stop`, so the hot loop is unchanged. Traffic touched only 6.6% of states in the 300-route overlap case, which is why this looks promising, but it's unbuilt and unproven.
 
@@ -636,7 +641,6 @@ Decide go or no-go at G3. Go only if all of these hold:
 - [ ] All contract tests pass, and regex fuzz shows 0 mismatches.
 - [ ] A router with no residual routes shows no slowdown against G2.
 - [ ] The crafted route and the 1000-route overlap case neither hang nor crash.
-- [ ] WP-10 go or no-go is recorded in the progress log, with its numbers.
 
 ### WP-11: Tuning
 
@@ -695,7 +699,7 @@ All of these must hold on both route sets, measured against medley given matchab
 | Wrong ranking passes every bench corpus | `routes-overlap` fixture and a harness self-test (WP-7) |
 | The real router is slower than the prototype, because it adds methods and accept rows | G2, with room left below the prototype's ratios |
 | The parser subtly changes a regex's meaning | Exact-or-rejected rule, and fuzz against `RegExp.test` |
-| State explosion on real route tables | WP-9 budget, with a clear failure unless WP-10 is a go |
+| State explosion on real route tables | Budget of 262,144 states, then a fast failure naming a route |
 | Residual routes keep backtracking and ReDoS exposure | Document it, and report how many routes were demoted |
 | Findings don't transfer from M1 to x86-64 | WP-11 re-run before finishing |
 | Moving from 13.7% to 95% hit rate changes every historical medley number | G1 records a new baseline; do not compare across it |
@@ -745,4 +749,6 @@ Record every package and gate here.
 | 2026-10-30 | WP-1 | 162eede | | | | | 40 reference tests; 18 injected bugs caught; rulings D10 and D11 added after review |
 | 2026-10-30 | WP-3 to WP-8 | a1de2ab | | | | 94.95% | 290 tests pass, 1 `todo`; 0 mismatches on 2.7M lookups across three route sets |
 | 2026-10-30 | G1 | 39a5399 | 19.37M unread, 12.78M read (prototype) | 6.44M | 3.0×, 2.0× | 94.95% | Hit rate passes. Timing provisional: load 7–14 from other apps |
+| 2026-10-30 | WP-9 | e70d2a9 | | | | | 304 tests; regex routes compile; residual routes interleave. 300 overlapping routes compile in 0.7s, 1000 in 28s |
+| 2026-10-30 | WP-10 | | | | | | Not built: Hopcroft removed its premise. Budget raised to 262,144 states |
 | 2026-10-30 | G2 | a1de2ab | 19.28M unread, 12.60M read (generic); 19.91M, 13.17M (specific) | 6.51M, 6.27M; 6.45M, 6.25M | 2.96×, 2.01×; 3.09×, 2.11× | 94.95%, 94.99% | Passes provisionally, in fixed rotation at load 5–60. Within -4.9% to +1.5% of prototype. Re-measure at G4 |

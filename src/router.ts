@@ -9,7 +9,8 @@ import { Match, prebuiltMatch } from './match';
 import { createMatcher } from './matcher';
 import type { RouteHandler, RouteMatch } from './types';
 
-const MAX_STATES = 32_767;
+/** About 450 routes of heavy param and literal overlap. A REST API of 3000 routes needs 14,000. */
+const DEFAULT_MAX_STATES = 262_144;
 /** A route needing more than this alone is left out of the DFA, so one can't use up the table. */
 const ROUTE_STATE_LIMIT = 4_096;
 const SCAN = { scanAfter: 8, scanRun: 8 };
@@ -64,10 +65,20 @@ function addTo<T>(table: Map<string, Map<string, T>>, method: string, key: strin
   else table.set(method, new Map([[key, entry]]));
 }
 
+export interface RouterOptions {
+  /** Compiling fails past this. Table memory grows with it: a state is about 256 bytes at most. */
+  maxStates?: number;
+}
+
 export class Router {
+  private readonly maxStates: number;
   private readonly patterns = new Map<string, Map<string, PatternEntry>>();
   private readonly regexes = new Map<string, Map<string, RegexEntry>>();
   private compiled: Compiled | null = null;
+
+  constructor(options: RouterOptions = {}) {
+    this.maxStates = options.maxStates ?? DEFAULT_MAX_STATES;
+  }
 
   on(method: string | string[], path: string | RegExp, handler: RouteHandler, store?: unknown): this {
     const methods = [method].flat().map(normalizeMethod);
@@ -101,7 +112,7 @@ export class Router {
   }
 
   private build(): Compiled {
-    const compiled = compileRoutes(this.patterns, this.regexes);
+    const compiled = compileRoutes(this.patterns, this.regexes, this.maxStates);
     this.compiled = compiled;
     return compiled;
   }
@@ -111,8 +122,8 @@ export class Router {
   }
 }
 
-export function createRouter(): Router {
-  return new Router();
+export function createRouter(options?: RouterOptions): Router {
+  return new Router(options);
 }
 
 const fitsAlone = (ast: Ast): boolean => buildDfa([{ ast, tag: 0 }], { maxStates: ROUTE_STATE_LIMIT }).ok;
@@ -150,12 +161,12 @@ function regexExtractor(regex: RegExp): Extractor | null {
 }
 
 /** Finds where a table goes over budget, so the error can name a route. Each build is bounded. */
-function firstOverBudget(inputs: DfaInput[]): number {
+function firstOverBudget(inputs: DfaInput[], maxStates: number): number {
   let low = 1;
   let high = inputs.length;
   while (low < high) {
     const middle = (low + high) >>> 1;
-    if (buildDfa(inputs.slice(0, middle), { maxStates: MAX_STATES }).ok) low = middle + 1;
+    if (buildDfa(inputs.slice(0, middle), { maxStates }).ok) low = middle + 1;
     else high = middle;
   }
   return low - 1;
@@ -164,6 +175,7 @@ function firstOverBudget(inputs: DfaInput[]): number {
 function compileRoutes(
   patterns: Map<string, Map<string, PatternEntry>>,
   regexes: Map<string, Map<string, RegexEntry>>,
+  maxStates: number,
 ): Compiled {
   // Method 0 is `*`, and also any method no route names.
   const methodIds = new Map<string, number>([[ANY_METHOD, 0]]);
@@ -235,11 +247,11 @@ function compileRoutes(
     }
   }
 
-  const built = buildDfa(inputs, { maxStates: MAX_STATES });
+  const built = buildDfa(inputs, { maxStates });
   if (!built.ok) {
-    const fit = firstOverBudget(inputs);
+    const fit = firstOverBudget(inputs, maxStates);
     throw new Error(
-      `Routes need more than ${MAX_STATES} DFA states: ${fit} of ${inputs.length} fit, and ${labels[inputs[fit].tag]} goes over`,
+      `Routes need more than ${maxStates} DFA states: ${fit} of ${inputs.length} fit, and ${labels[inputs[fit].tag]} goes over`,
     );
   }
   const { dfa } = built;
