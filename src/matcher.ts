@@ -2,13 +2,14 @@ import { Match } from './match';
 import type { Extractor, Miss, Results, Table } from './compiler/types';
 import type { RouteMatch } from './types';
 
-/** Whether [from, to) holds a character above ASCII. */
-function hasNonAscii(s: string, from: number, to: number): boolean {
-  for (let i = from; i < to; i += 1) {
-    if (s.charCodeAt(i) >= 128) return true;
-  }
-  return false;
-}
+/**
+ * Whether `s` holds a character above ASCII, which always takes more than one UTF-8 byte. Over 200
+ * characters this is 12x faster than a JS loop.
+ */
+const hasNonAscii = (s: string): boolean => Buffer.byteLength(s) !== s.length;
+
+/** Whether the path before `end` holds a character above ASCII, ignoring any query. */
+const pathHasNonAscii = (s: string, end: number): boolean => hasNonAscii(end === s.length ? s : s.slice(0, end));
 
 /**
  * Runs the table over a path. See "Rules for matcher.ts" in PLAN.md before changing `find`: each rule
@@ -32,6 +33,7 @@ export function createMatcher(
   const STORES = results.stores;
   const EXTRACTORS = results.extractors;
   const PREBUILT = results.prebuilt;
+  const INEXACT = results.inexact;
 
   /**
    * The next `/`, `?` or non-ASCII character within RUN characters of i, or n at the end of the input.
@@ -52,7 +54,7 @@ export function createMatcher(
    *
    * A stop on a non-ASCII character flags the path and steps over it. Any other stop is the end of a
    * scan chain, so it gallops to the next `/` or `?`. `indexOf` skips characters without looking at
-   * them, so a path about to get a direct result rechecks what was skipped.
+   * them, so a path about to get an inexact direct result rechecks what was skipped.
    *
    * `?` is searched for at most once: narrowing n to the end of the path means that a path of many
    * long segments doesn't rescan to its end at each one.
@@ -94,7 +96,8 @@ export function createMatcher(
     if (i < n && s.charCodeAt(i) !== 63) return miss(s, m, -1, -1);
     const row = ROW[st];
     const r = row < 0 ? -1 : RESULT[(row << METHOD_BITS) + m];
-    if (r < 0 || flagged || (skipped >= 0 && hasNonAscii(s, skipped, i))) return miss(s, m, i, row);
+    if (r < 0) return miss(s, m, i, row);
+    if (INEXACT[r] === 1 && (flagged || (skipped >= 0 && pathHasNonAscii(s, i)))) return miss(s, m, i, row);
     const prebuilt = PREBUILT[r];
     return prebuilt !== null ? prebuilt : new Match(HANDLERS[r], STORES[r], EXTRACTORS[r] as Extractor, s, i);
   }

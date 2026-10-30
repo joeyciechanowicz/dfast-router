@@ -51,6 +51,9 @@ const isWord = (unit: number) => isDigit(unit) || isLetter(unit) || unit === 95;
 const isSpace = (symbol: number) =>
   (symbol >= 9 && symbol <= 13) || symbol === 32 || symbol === NON_ASCII;
 
+/** Holds some code units above ASCII, but not all: `\s`, `\S`, and `.` without `s`. */
+const PARTIAL = new Set<string>(['s', 'S']);
+
 const SHORTHANDS = new Map<string, Shorthand>([
   ['d', { set: mkset(isDigit), every: false }],
   ['D', { set: mkset((s) => !isDigit(s)), every: true }],
@@ -79,6 +82,11 @@ class Unsupported extends Error {}
 class Members {
   private readonly symbols = new Uint8Array(ALPHABET);
   private every = false;
+
+  /** Whether this may hold some of the code units above ASCII without holding them all. */
+  get inexact(): boolean {
+    return this.symbols[NON_ASCII] === 1 && !this.every;
+  }
 
   /** Both ends are code units. They may be above ASCII. */
   addRange(low: number, high: number): void {
@@ -127,6 +135,7 @@ function repeat(x: Ast, min: number, max: number): Ast {
 
 class Parser {
   readonly names: string[] = [];
+  inexact = false;
   private p = 0;
   private depth = 0;
 
@@ -222,10 +231,14 @@ class Parser {
         return this.charClass();
       case '.':
         this.p += 1;
+        if (!this.options.dotAll) this.inexact = true; // leaves out U+2028 and U+2029
         return { t: 'set', set: this.options.dotAll ? DOT_ALL : DOT };
       case '\\': {
+        const name = src[this.p + 1];
         const escape = this.escape(false);
-        return typeof escape === 'number' ? this.literal(escape) : { t: 'set', set: escape.set };
+        if (typeof escape === 'number') return this.literal(escape);
+        if (PARTIAL.has(name)) this.inexact = true;
+        return { t: 'set', set: escape.set };
       }
       case '^':
       case '$':
@@ -239,6 +252,7 @@ class Parser {
   private literal(unit: number): Ast {
     const members = new Members();
     members.add(unit);
+    this.inexact = this.inexact || members.inexact;
     return { t: 'set', set: members.toSet(false, this.options.ignoreCase) };
   }
 
@@ -299,6 +313,7 @@ class Parser {
       }
     }
     this.p += 1;
+    this.inexact = this.inexact || members.inexact;
     return { t: 'set', set: members.toSet(negated, this.options.ignoreCase) };
   }
 
@@ -387,7 +402,7 @@ function parse(source: string, options: Options): Parsed {
     if (expandedNodes(ast) > MAX_EXPANDED_NODES) {
       return { ok: false, reason: `repeats expand past ${MAX_EXPANDED_NODES} AST nodes` };
     }
-    return { ok: true, ast, names: parser.names };
+    return { ok: true, ast, names: parser.names, inexact: parser.inexact };
   } catch (error) {
     if (error instanceof Unsupported) return { ok: false, reason: error.message };
     throw error;

@@ -370,6 +370,15 @@ test('a non-ASCII character deep inside a long param is still confirmed (D10)', 
   assert.deepEqual({ ...router.find('GET', `/any/${long}é`)?.params }, { v: `${long}é` });
 });
 
+test('an inexact route on a shared path does not hide an exact one (D10)', () => {
+  const plain = () => 'plain';
+  const router = createRouter();
+  router.on('GET', '/p/:w', plain).on('GET', '/p/:v(.+)', noop); // the regex outranks the plain param
+  assert.equal(router.find('GET', '/p/a\u2028b')?.handler, plain);
+  assert.equal(router.find('GET', `/p/${'a'.repeat(100)}\u2028b`)?.handler, plain);
+  assert.notEqual(router.find('GET', '/p/aüb')?.handler, plain);
+});
+
 test('`%` stays undecoded', () => {
   const router = createRouter();
   router.on('GET', '/x/:v', noop);

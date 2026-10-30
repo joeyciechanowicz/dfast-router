@@ -127,10 +127,12 @@ function pushLiteral(xs: Ast[], text: string): void {
 export function variantAst(v: Variant, parse: ParseFragment): Parsed {
   const xs: Ast[] = [];
   const names: string[] = [];
+  let inexact = false;
   for (const segment of v.segments) {
     pushLiteral(xs, '/');
     if (segment.kind === 'static') {
       pushLiteral(xs, segment.value);
+      inexact = inexact || /[^\0-\x7f]/.test(segment.value);
       continue;
     }
     names.push(segment.name);
@@ -142,9 +144,10 @@ export function variantAst(v: Variant, parse: ParseFragment): Parsed {
       const parsed = parse(segment.source);
       if (!parsed.ok) return parsed;
       xs.push(parsed.ast);
+      inexact = inexact || parsed.inexact === true;
     }
   }
-  return { ok: true, ast: { t: 'cat', xs }, names };
+  return { ok: true, ast: { t: 'cat', xs }, names, inexact };
 }
 
 const escapeLiteral = (text: string): string => text.replace(/[\\^$.*+?()[\]{}|/-]/g, '\\$&');

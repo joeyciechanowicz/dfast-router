@@ -18,9 +18,12 @@ export type Ast =
   | { t: 'alt'; xs: Ast[] }
   | { t: 'rep'; x: Ast; min: number; max: number }; // max may be Infinity
 
-/** `names` lists named groups, in order. */
+/**
+ * `names` lists named groups, in order. `inexact` means a set over-accepts above ASCII, so a match
+ * on a non-ASCII path needs confirming. Without it, the AST is exact on every path.
+ */
 export type Parsed =
-  | { ok: true; ast: Ast; names: string[] }
+  | { ok: true; ast: Ast; names: string[]; inexact?: boolean }
   | { ok: false; reason: string };
 
 export type ParseFragment = (source: string) => Parsed;
@@ -75,11 +78,12 @@ export interface Results {
   stores: unknown[];
   extractors: (Extractor | null)[]; // null = no params
   prebuilt: (RouteMatch | null)[];  // frozen result when there are no params
+  inexact: Uint8Array;              // 1 = a non-ASCII path must be confirmed in `miss`
 }
 
 /**
- * Called when the DFA gives no direct result, and always for a path holding a non-ASCII
- * character. `row` is the final state's accept row, or -1 if it has none. `end` is the
+ * Called when the DFA gives no direct result, and for a non-ASCII path whose result is
+ * inexact. `row` is the final state's accept row, or -1 if it has none. `end` is the
  * path's end, or -1 if the DFA stopped before reaching it: `miss` finds it only if needed.
  */
 export type Miss = (path: string, method: number, end: number, row: number) => RouteMatch | null;

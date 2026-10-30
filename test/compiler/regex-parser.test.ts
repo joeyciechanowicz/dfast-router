@@ -500,3 +500,29 @@ test('parsing keeps no state between calls, and leaves the regex alone', () => {
   assert.equal(parseRegExp(regex).ok, true);
   assert.equal(regex.lastIndex, 5);
 });
+
+test('inexact: reported for sets that hold only part of the range above ASCII', () => {
+  const inexact = (source: string): boolean => {
+    const parsed = parseFragment(source);
+    assert.ok(parsed.ok, source);
+    return parsed.inexact === true;
+  };
+  for (const source of ['.', '.+', 'a.b', '\\s', '\\S', '[\\s]', '[\\S]', '[^\\s]', 'é', '[é]', '[^é]', '[^/é]', '\\u00e9', '[a-\\u00ff]', '(?:a|é)']) {
+    assert.equal(inexact(source), true, source);
+  }
+  for (const source of ['a', 'a+', '\\d+', '\\w', '\\D', '\\W', '[a-z]', '[^/]+', '[^a]', '[\\D]', '[^\\d]', '[\\x00-\\uffff]']) {
+    assert.equal(inexact(source), false, source);
+  }
+});
+
+test('inexact: `.` is exact under `s`, and a whole-path regex reports too', () => {
+  const inexact = (regex: RegExp): boolean => {
+    const parsed = parseRegExp(regex);
+    assert.ok(parsed.ok, String(regex));
+    return parsed.inexact === true;
+  };
+  assert.equal(inexact(/^a.b$/s), false);
+  assert.equal(inexact(/^a.b$/), true);
+  assert.equal(inexact(/^\/users\/\d+$/), false);
+  assert.equal(inexact(/users/), false);
+});

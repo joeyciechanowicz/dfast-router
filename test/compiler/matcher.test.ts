@@ -28,6 +28,7 @@ interface Options {
   methodBits?: number;
   allows?: (tag: number, method: number) => boolean;
   exact?: Record<string, RegExp>; // pattern path to the regex `miss` confirms with, when not derivable
+  exactResults?: boolean; // results need no confirming; they all do by default
 }
 
 interface MissCall {
@@ -79,6 +80,7 @@ function assemble(dfa: Dfa, entries: Entry[], options: Options = {}) {
     stores: entries.map((entry) => entry.route),
     extractors: entries.map((entry) => (entry.names.length > 0 ? extractorFor(entry) : null)),
     prebuilt: entries.map((entry) => (entry.names.length > 0 ? null : prebuiltMatch(handler, entry.route))),
+    inexact: new Uint8Array(entries.length).fill(options.exactResults ? 0 : 1),
   };
   const table = buildTable(dfa, rowOf, { scanAfter, scanRun });
 
@@ -564,6 +566,13 @@ describe('find: non-ASCII', () => {
       assert.equal(find(path, GET)?.store, 0, path);
       assert.deepEqual(misses, [{ path, method: GET, end: path.length, row: 0 }], path);
     }
+  });
+
+  test('an exact result needs no confirming, even on a non-ASCII path', () => {
+    const { find, misses } = harness(['/x/:v'], { exactResults: true });
+    assert.ok(find('/x/é', GET));
+    assert.ok(find(`/x/${'a'.repeat(100)}é${'a'.repeat(100)}`, GET));
+    assert.deepEqual(misses, []);
   });
 
   test('characters in the query do not flag the path', () => {

@@ -202,6 +202,7 @@ function compileRoutes(
   const exactRegexes: (RegExp | null)[] = variants.map(() => null);
   const exactRegex = (tag: number): RegExp => (exactRegexes[tag] ??= variantRegExp(variants[tag]));
   const confirms: boolean[] = variants.map(() => false);
+  const inexact: boolean[] = [];
 
   const fragments = new Map<string, Parsed>();
   const compilable = (source: string): Parsed => {
@@ -224,6 +225,7 @@ function compileRoutes(
     };
     const parsed = variantAst(variant, lenient);
     if (!parsed.ok) throw new Error(`Can't compile route ${labels[tag]}: ${parsed.reason}`);
+    inexact[tag] = parsed.inexact === true;
     return { ast: parsed.ast, tag };
   });
 
@@ -239,6 +241,7 @@ function compileRoutes(
         labels.push(String(regex));
         exactRegexes[tag] = regex;
         confirms[tag] = false;
+        inexact[tag] = parsed.inexact === true;
         inputs.push({ ast: parsed.ast, tag });
       } else {
         regexTags.set(key, -1);
@@ -257,8 +260,18 @@ function compileRoutes(
   const { dfa } = built;
 
   // Results, one per registered (route, method).
-  const results: Results = { rows: new Int32Array(0), methodBits, handlers: [], stores: [], extractors: [], prebuilt: [] };
-  const addResult = ({ handler, store }: Target, extractor: Extractor | null): number => {
+  const results: Results = {
+    rows: new Int32Array(0),
+    methodBits,
+    handlers: [],
+    stores: [],
+    extractors: [],
+    prebuilt: [],
+    inexact: new Uint8Array(0),
+  };
+  const resultInexact: number[] = [];
+  const addResult = ({ handler, store }: Target, extractor: Extractor | null, tag: number): number => {
+    resultInexact.push(tag >= 0 && inexact[tag] ? 1 : 0);
     results.handlers.push(handler);
     results.stores.push(store);
     results.extractors.push(extractor);
@@ -275,7 +288,7 @@ function compileRoutes(
     const byTag: { result: number; priority: number }[] = [];
     sorted.forEach((entry, priority) => {
       const tag = tags.get(entry.variant.key) as number;
-      const result = addResult(entry, extractorOf[tag]);
+      const result = addResult(entry, extractorOf[tag], tag);
       tagOfResult.set(result, tag);
       byTag[tag] = { result, priority };
     });
@@ -286,11 +299,13 @@ function compileRoutes(
   for (const [method, entries] of regexes) {
     const list: RegexCandidate[] = [];
     for (const [key, entry] of entries) {
-      const result = addResult(entry, regexExtractor(entry.regex));
-      list.push({ regex: entry.regex, result, tag: regexTags.get(key) as number, prefix: literalPrefix(entry.regex) });
+      const tag = regexTags.get(key) as number;
+      const result = addResult(entry, regexExtractor(entry.regex), tag);
+      list.push({ regex: entry.regex, result, tag, prefix: literalPrefix(entry.regex) });
     }
     regexByMethod.set(method, list);
   }
+  results.inexact = Uint8Array.from(resultInexact);
   const regexTiers = names.map((_, m) => tiersOf(m).flatMap((name) => regexByMethod.get(name) ?? []));
   const hasResidual = regexTiers.map((tier) => tier.some((candidate) => candidate.tag < 0));
   const anyResidual = hasResidual.includes(true);
