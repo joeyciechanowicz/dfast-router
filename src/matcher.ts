@@ -32,14 +32,21 @@ export function createMatcher(
   const SCAN = table.scan;
   const RUN = table.scanRun;
   const TAIL = table.tail;
-  const ROW = table.rowOf;
-  const RESULT = results.rows;
   const METHOD_BITS = results.methodBits;
+  // A state with no accept row points at a row of -1, so that a lookup needs no check for it.
+  const NO_ROW = results.rows.length;
+  const ROW = Int32Array.from(table.rowOf, (row) => (row < 0 ? NO_ROW : row << METHOD_BITS));
+  const RESULT = new Int32Array(NO_ROW + (1 << METHOD_BITS)).fill(-1);
+  RESULT.set(results.rows);
   const HANDLERS = results.handlers;
   const STORES = results.stores;
   const EXTRACTORS = results.extractors;
   const PREBUILT = results.prebuilt;
   const INEXACT = results.inexact;
+
+  /** `miss`, given a row as an offset into RESULT. */
+  const missAt = (s: string, m: number, i: number, row: number): RouteMatch | null =>
+    miss(s, m, i, row === NO_ROW ? -1 : row >> METHOD_BITS);
 
   /**
    * The next `/`, `?` or non-ASCII character within RUN characters of i, or n at the end of the input.
@@ -110,9 +117,9 @@ export function createMatcher(
     }
     if (i < n && s.charCodeAt(i) !== 63) return miss(s, m, -1, -1);
     const row = ROW[st];
-    const r = row < 0 ? -1 : RESULT[(row << METHOD_BITS) + m];
-    if (r < 0) return miss(s, m, i, row);
-    if (INEXACT[r] === 1 && (flagged || (skipped >= 0 && pathHasNonAscii(s, i)))) return miss(s, m, i, row);
+    const r = RESULT[row + m];
+    if (r < 0) return missAt(s, m, i, row);
+    if (INEXACT[r] === 1 && (flagged || (skipped >= 0 && pathHasNonAscii(s, i)))) return missAt(s, m, i, row);
     const prebuilt = PREBUILT[r];
     return prebuilt !== null ? prebuilt : new Match(HANDLERS[r], STORES[r], EXTRACTORS[r] as Extractor, s, i);
   }
@@ -132,8 +139,8 @@ export function createMatcher(
     // `?` shares its class with every symbol in no set, so a stop here may be a dead character.
     if (i < n && s.charCodeAt(i) !== 63) return miss(s, m, -1, -1);
     const row = ROW[st];
-    const r = row < 0 ? -1 : RESULT[(row << METHOD_BITS) + m];
-    if (r < 0) return miss(s, m, i, row);
+    const r = RESULT[row + m];
+    if (r < 0) return missAt(s, m, i, row);
     const prebuilt = PREBUILT[r];
     return prebuilt !== null ? prebuilt : new Match(HANDLERS[r], STORES[r], EXTRACTORS[r] as Extractor, s, i);
   };
