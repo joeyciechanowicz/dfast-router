@@ -6,7 +6,7 @@ import { createReference } from '../../bench/reference.mjs';
 import { buildTable } from '../../src/compiler/table';
 import { ALPHABET, NON_ASCII, QMARK, SLASH } from '../../src/compiler/types';
 import type { Dfa, Extractor, Miss, Results, Table } from '../../src/compiler/types';
-import { Match, prebuiltMatch } from '../../src/match';
+import { Match, MatchTarget } from '../../src/match';
 import { createMatcher } from '../../src/matcher';
 import type { RouteMatch } from '../../src/types';
 import { compileFixture } from '../helpers/dfa-fixture';
@@ -76,10 +76,9 @@ function assemble(dfa: Dfa, entries: Entry[], options: Options = {}) {
   const results: Results = {
     rows,
     methodBits,
-    handlers: entries.map(() => handler),
-    stores: entries.map((entry) => entry.route),
-    extractors: entries.map((entry) => (entry.names.length > 0 ? extractorFor(entry) : null)),
-    prebuilt: entries.map((entry) => (entry.names.length > 0 ? null : prebuiltMatch(handler, entry.route))),
+    targets: entries.map((entry) => (
+      new MatchTarget(handler, entry.route, entry.names.length > 0 ? extractorFor(entry) : null)
+    )),
     inexact: new Uint8Array(entries.length).fill(options.exactResults ? 0 : 1),
   };
   const table = buildTable(dfa, rowOf, { scanAfter, scanRun });
@@ -91,7 +90,7 @@ function assemble(dfa: Dfa, entries: Entry[], options: Options = {}) {
     if (row < 0) return null;
     const r = rows[(row << methodBits) + method];
     if (r < 0 || !entries[r].regex.test(path.slice(0, stop))) return null;
-    return results.prebuilt[r] ?? new Match(handler, entries[r].route, results.extractors[r]!, path, stop);
+    return results.targets[r].prebuilt ?? new Match(results.targets[r], path, stop, null);
   };
   const find = createMatcher(table, results, miss);
   return { find, table, results, dfa, rowOf, misses, counts };
@@ -270,7 +269,7 @@ describe('Match', () => {
 
   test('builds params on first read only, and passes path and end', () => {
     const { calls, extract } = extractor();
-    const match = new Match(handler, 'store', extract, '/5?x', 2);
+    const match = new Match(new MatchTarget(handler, 'store', extract), '/5?x', 2, null);
     assert.equal(calls.length, 0);
     const first = match.params;
     assert.deepEqual(first, { id: '5' });
@@ -281,24 +280,25 @@ describe('Match', () => {
 
   test('keeps an empty params object without extracting again', () => {
     let calls = 0;
-    const match = new Match(handler, 0, () => {
+    const target = new MatchTarget(handler, 0, () => {
       calls += 1;
       return {};
-    }, '/', 1);
+    });
+    const match = new Match(target, '/', 1, null);
     assert.equal(match.params, match.params);
     assert.equal(calls, 1);
   });
 
   test('exposes handler and store, and params spread as usual', () => {
-    const match = new Match(handler, 'store', extractor().extract, '/5', 2);
+    const match = new Match(new MatchTarget(handler, 'store', extractor().extract), '/5', 2, null);
     assert.equal(match.handler, handler);
     assert.equal(match.store, 'store');
     assert.deepEqual({ ...match.params }, { id: '5' });
   });
 
-  test('prebuilt results are frozen, with frozen empty params', () => {
-    const match = prebuiltMatch(handler, 'store');
-    assert.ok(Object.isFrozen(match));
+  test('a route with no params gets one shared Match, with frozen empty params', () => {
+    const match = new MatchTarget(handler, 'store', null).prebuilt as Match;
+    assert.ok(match instanceof Match);
     assert.ok(Object.isFrozen(match.params));
     assert.deepEqual(match.params, {});
     assert.equal(match.handler, handler);
@@ -307,10 +307,11 @@ describe('Match', () => {
 });
 
 describe('find: results', () => {
-  test('returns the same frozen object for a static route, without calling miss', () => {
+  test('returns the same Match for a static route, without calling miss', () => {
     const { find, misses } = harness(['/about', '/items/:id']);
     const first = find('/about', GET);
-    assert.ok(first !== null && Object.isFrozen(first));
+    assert.ok(first instanceof Match);
+    assert.ok(find('/items/1', GET) instanceof Match);
     assert.equal(find('/about', GET), first);
     assert.equal(find('/about?x=1', GET), first);
     assert.equal(misses.length, 0);

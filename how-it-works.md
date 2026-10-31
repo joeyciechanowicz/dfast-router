@@ -74,6 +74,8 @@ One DFA serves every method. Each state keeps every route that accepts there, an
 
 ## Params
 
+Every hit returns the same class, `Match`, so a caller's reads stay monomorphic. A match holds only a pointer to its route's shared data, the path, and where the path ends, and a route with no params reuses a single match.
+
 `find` does no work for params. On first read, `Match.params` runs the variant's extractor, which uses the cheapest method that is correct:
 
 1. Fixed offsets, when everything before the param has a known width

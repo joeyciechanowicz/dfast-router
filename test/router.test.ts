@@ -322,7 +322,7 @@ test('matches do not share params', () => {
   assert.equal(a?.params.id, '1');
 });
 
-test('static results are shared and frozen (D5)', () => {
+test('static results are shared, with frozen params (D5)', () => {
   const router = createRouter();
   router.on('GET', '/static', noop);
   const a = router.find('GET', '/static');

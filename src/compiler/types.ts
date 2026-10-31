@@ -1,4 +1,5 @@
-import type { RouteHandler, RouteMatch } from '../types';
+import type { MatchTarget } from '../match';
+import type { RouteMatch } from '../types';
 
 export const ALPHABET = 129;  // ASCII, plus one symbol for every code unit above 127
 export const NON_ASCII = 128;
@@ -75,10 +76,7 @@ export type Extractor = (path: string, end: number) => Record<string, string>;
 export interface Results {
   rows: Int32Array;                 // [(row << methodBits) + method] = result index, or -1
   methodBits: number;
-  handlers: RouteHandler[];         // by result index
-  stores: unknown[];
-  extractors: (Extractor | null)[]; // null = no params
-  prebuilt: (RouteMatch | null)[];  // frozen result when there are no params
+  targets: MatchTarget[];           // by result index
   inexact: Uint8Array;              // 1 = a non-ASCII path must be confirmed in `miss`
 }
 

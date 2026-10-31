@@ -1,6 +1,6 @@
 import { Match } from './match';
 import { NON_ASCII } from './compiler/types';
-import type { Extractor, Miss, Results, Table } from './compiler/types';
+import type { Miss, Results, Table } from './compiler/types';
 import type { RouteMatch } from './types';
 
 const CHAR_CODES = 0x10000;
@@ -38,10 +38,7 @@ export function createMatcher(
   const ROW = Int32Array.from(table.rowOf, (row) => (row < 0 ? NO_ROW : row << METHOD_BITS));
   const RESULT = new Int32Array(NO_ROW + (1 << METHOD_BITS)).fill(-1);
   RESULT.set(results.rows);
-  const HANDLERS = results.handlers;
-  const STORES = results.stores;
-  const EXTRACTORS = results.extractors;
-  const PREBUILT = results.prebuilt;
+  const TARGETS = results.targets;
   const INEXACT = results.inexact;
 
   /** `miss`, given a row as an offset into RESULT. */
@@ -120,8 +117,9 @@ export function createMatcher(
     const r = RESULT[row + m];
     if (r < 0) return missAt(s, m, i, row);
     if (INEXACT[r] === 1 && (flagged || (skipped >= 0 && pathHasNonAscii(s, i)))) return missAt(s, m, i, row);
-    const prebuilt = PREBUILT[r];
-    return prebuilt !== null ? prebuilt : new Match(HANDLERS[r], STORES[r], EXTRACTORS[r] as Extractor, s, i);
+    const target = TARGETS[r];
+    const prebuilt = target.prebuilt;
+    return prebuilt !== null ? prebuilt : new Match(target, s, i, null);
   }
 
   return function find(s: string, m: number): RouteMatch | null {
@@ -141,7 +139,8 @@ export function createMatcher(
     const row = ROW[st];
     const r = RESULT[row + m];
     if (r < 0) return missAt(s, m, i, row);
-    const prebuilt = PREBUILT[r];
-    return prebuilt !== null ? prebuilt : new Match(HANDLERS[r], STORES[r], EXTRACTORS[r] as Extractor, s, i);
+    const target = TARGETS[r];
+    const prebuilt = target.prebuilt;
+    return prebuilt !== null ? prebuilt : new Match(target, s, i, null);
   };
 }

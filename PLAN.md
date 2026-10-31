@@ -29,7 +29,7 @@ These are settled for this plan. Changing one after G2 means reworking finished 
 | D2 | Trailing and double slashes are significant: `/items/` does not match `/items` | Matches medley and the differential reference. **Behaviour change:** the old router dropped empty segments. |
 | D3 | `?` ends the path during matching | `req.url` includes the query string. **Behaviour change:** the old router did not strip it. |
 | D4 | `match.params` is a lazy getter | The router is 2.9× medley when params go unread and 2× when read, and many routes have no params. `{ ...match.params }` still works. |
-| D5 | Static-route results are shared and frozen | No allocation on static hits. Handlers must not mutate `params`. |
+| D5 | Static-route results are shared, with frozen `params` | No allocation on static hits. Handlers must not mutate `params`. The result itself was frozen until 2026-10-31, when one `Match` class replaced it, to keep callers monomorphic. |
 | D6 | Regex routes expose named groups (`(?<id>\d+)`) as params | Old regex routes returned empty params. Numbered groups stay unexposed. |
 | D7 | No URL cache | The old GET cache only looks good because bench URLs are internalized literals with cached hashes. |
 | D8 | `@medley/router` is the bench baseline, and the local copy is gone | Changed after G4: the published package is the same algorithm, so nothing needs a copy. |

@@ -56,7 +56,8 @@ Registering a pattern again for the same method replaces it and keeps its origin
 
 Returns `{ handler, params, store }`, or `null`.
 
-- `params` is built on first read. A route with no params returns a shared, frozen result, so don't mutate it.
+- `params` is built on first read. A route with no params returns a shared result with frozen `params`, so don't mutate it.
+- All three are getters, so read them by name: `{ ...match }` and `Object.keys(match)` won't include them.
 - `path` may include a query string, which is ignored.
 
 ### `router.compile()`

@@ -5,7 +5,7 @@ import { compareRank, parsePattern, variantAst, variantRegExp } from './compiler
 import { parseFragment, parseRegExp } from './compiler/regex-parser';
 import { buildTable } from './compiler/table';
 import type { Ast, DfaInput, Extractor, Miss, Parsed, Results, Variant } from './compiler/types';
-import { Match, prebuiltMatch } from './match';
+import { Match, MatchTarget } from './match';
 import { createMatcher } from './matcher';
 import type { RouteHandler, RouteMatch } from './types';
 
@@ -269,20 +269,13 @@ function compileRoutes(
   const results: Results = {
     rows: new Int32Array(0),
     methodBits,
-    handlers: [],
-    stores: [],
-    extractors: [],
-    prebuilt: [],
+    targets: [],
     inexact: new Uint8Array(0),
   };
   const resultInexact: number[] = [];
   const addResult = ({ handler, store }: Target, extractor: Extractor | null, tag: number): number => {
     resultInexact.push(tag >= 0 && inexact[tag] ? 1 : 0);
-    results.handlers.push(handler);
-    results.stores.push(store);
-    results.extractors.push(extractor);
-    results.prebuilt.push(extractor === null ? prebuiltMatch(handler, store) : null);
-    return results.handlers.length - 1;
+    return results.targets.push(new MatchTarget(handler, store, extractor)) - 1;
   };
 
   // Ties follow each method's own order, so each method ranks its variants separately.
@@ -357,8 +350,10 @@ function compileRoutes(
     });
   });
 
-  const resultAt = (r: number, path: string, end: number): RouteMatch =>
-    results.prebuilt[r] ?? new Match(results.handlers[r], results.stores[r], results.extractors[r]!, path, end);
+  const resultAt = (r: number, path: string, end: number): RouteMatch => {
+    const target = results.targets[r];
+    return target.prebuilt ?? new Match(target, path, end, null);
+  };
 
   const miss: Miss = (path, method, end, row) => {
     const code = path.length === 0 ? 0 : path.charCodeAt(0);
