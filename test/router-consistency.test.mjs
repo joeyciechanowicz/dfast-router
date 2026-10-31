@@ -8,6 +8,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
+import { createExpress4, createExpress5 } from '../bench/express.mjs';
 import { createReference } from '../bench/reference.mjs';
 import { methods, neverWin, routes as overlapRoutes, urls as overlapUrls } from './fixtures/routes-overlap.mjs';
 import { compare, countOverlaps, mutate } from './helpers/differential.mjs';
@@ -83,6 +84,56 @@ test('bench route set: specific', { skip: specificSkip }, async () => {
   const { precomputedUrls } = await import(specificUrls.href);
   await checkRouteSet(routes, precomputedUrls);
 });
+
+function expressTarget(create, routes) {
+  const { lookup } = create(routes);
+  return (method, url) => {
+    const match = lookup(method, url[0] === '/' ? url : `/${url}`);
+    if (match === null) return null;
+    // Express 4 keeps the key of an unset optional param.
+    const params = Object.entries(match.params).filter(([, value]) => value !== undefined);
+    return { route: match.routeId, params: Object.fromEntries(params) };
+  };
+}
+
+// Express is held to the same reference as the router, so agreeing with it means agreeing with each
+// other. It really does differ on two kinds of URL, which are counted and left out:
+// - `%`, because Express decodes params and this router doesn't.
+// - A URL that matches two routes, because Express takes the first registered and this router takes
+//   the highest ranked.
+async function checkExpress(create, routes, corpus) {
+  const each = routes.map((route) => createReference([route]));
+  const matchesOne = ({ method, url }) =>
+    each.filter((reference) => reference(url, method) !== null).length <= 1;
+  const lookups = lookupsFor(corpus);
+  const decoded = lookups.filter(({ url }) => url.includes('%')).length;
+  const undecoded = lookups.filter(({ url }) => !url.includes('%'));
+  const comparable = undecoded.filter(matchesOne);
+
+  const result = compare(expressTarget(create, routes), routes, comparable);
+  console.log(
+    `checked ${result.checked}, ${result.hits} hits, ${result.mismatches.length} mismatches, ` +
+      `left out ${decoded} with % and ${undecoded.length - comparable.length} matching two routes`,
+  );
+  assertAgrees(result);
+  assert.ok(result.hits > result.checked / 2, 'too few hits to mean anything');
+}
+
+const expressVersions = [['express@4', createExpress4], ['express@5', createExpress5]];
+const expressSkip = PROTOTYPE ? 'this checks Express, not the prototype' : false;
+
+for (const [name, create] of expressVersions) {
+  test(`${name} agrees on the generic bench routes`, { skip: expressSkip }, async () => {
+    const { routes, precomputedUrls } = await import('../bench/routes-generic.mjs');
+    await checkExpress(create, routes, precomputedUrls);
+  });
+
+  test(`${name} agrees on the specific bench routes`, { skip: expressSkip || specificSkip }, async () => {
+    const { routes } = await import(specificRoutes.href);
+    const { precomputedUrls } = await import(specificUrls.href);
+    await checkExpress(create, routes, precomputedUrls);
+  });
+}
 
 test('overlapping route set', { skip: PROTOTYPE ? 'the prototype uses registration order' : false }, async () => {
   const find = await routerTarget(overlapRoutes);

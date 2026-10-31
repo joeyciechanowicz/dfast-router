@@ -29,6 +29,8 @@
     "@medley/router": "^0.2.1",
     "@tinyhttp/app": "^3.0.4",
     "@types/node": "^20.11.30",
+    "express": "^5.3.0",
+    "express-4": "npm:express@^4.22.3",
     "fastify": "^5.7.2",
     "find-my-way": "^8.2.0",
     "h3": "^1.15.0",

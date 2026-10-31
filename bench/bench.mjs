@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { buildCorpus, injectNotFound } from "./corpus.mjs";
+import { createExpress4, createExpress5 } from "./express.mjs";
 import { createReference } from "./reference.mjs";
 import { routes, precomputedUrls, routesSource, urlsSource } from "./routes.mjs";
 
@@ -415,6 +416,8 @@ async function runBenchmarks() {
     ["balancing-router", () => buildBalancingRouter()],
     ["@medley/router", () => buildMedleyRouter()],
     ["path-to-regexp-linear", () => buildPathToRegexpLinear()],
+    ["express@4", () => createExpress4(routeDefinitions)],
+    ["express@5", () => createExpress5(routeDefinitions)],
   ];
 
   const routers = [];

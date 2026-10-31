@@ -2,7 +2,7 @@
 
 A fast HTTP router for routes defined as regexes. It compiles the whole route table into one DFA and runs it from a typed-array table, so a lookup reads each character once, and most regex routes can't backtrack.
 
-On the bench traffic it's about 3× faster than a radix-tree router (`@medley/router`) that does less: it validates param regexes, which that router can't. See [Performance](#performance).
+On the bench traffic it's about 3× faster than a radix-tree router (`@medley/router`) that does less: it validates param regexes, which that router can't. Against Express's router, which enforces the same routes and matches exactly the same URLs, it's at least 13× faster with params read. See [Performance](#performance).
 
 ## Usage
 
@@ -176,6 +176,27 @@ Measured with `bench/bench.mjs` on an Apple M1 Pro with Node 22, best of 3 seeds
 | 3,000 REST routes | read | 166ns | 282ns | 1.71× |
 
 Compiling 3,000 REST routes takes about 0.1s. These numbers come from a machine that wasn't fully idle, and from one CPU.
+
+### Against Express
+
+Express's router can enforce the same routes, so this is the like-for-like comparison: the same 34 routes, with param regexes enforced by the matcher, and `strict` and `caseSensitive` on to match this router's rules. Measured with `npm run bench:compare -- --read-params`, best of 3, with Express 5.3 and 4.22.
+
+| Traffic | Hit rate | balancing-router | Express 5 | Express 4 | vs Express 5 | vs Express 4 |
+|---|---:|---:|---:|---:|---:|---:|
+| 34 routes, shuffled | 94.95% | 14.3M/s (70ns) | 1.11M/s (903ns) | 1.01M/s (993ns) | 13× | 14× |
+| Near-miss 404s | 16.92% | 18.8M/s (53ns) | 890K/s (1,124ns) | 714K/s (1,401ns) | 21× | 26× |
+| Query strings | 94.95% | 12.0M/s (83ns) | 928K/s (1,078ns) | 842K/s (1,188ns) | 13× | 14× |
+
+Both Express versions matched the reference with no over-matching or under-matching on all five corpora. On near-miss 404s, `@medley/router` reports 27.0% and `path-to-regexp-linear` 46.0%, because neither can enforce param regexes. `npm run test:consistency` also compares route and params URL by URL: 0 mismatches on 1.3M lookups of these routes for each Express version. It leaves out URLs containing `%`, because Express decodes params and this router doesn't.
+
+What differs between the numbers:
+
+- Express runs its real `Router` dispatch through to the route's handler, because it has no separate lookup. `find()` returns the match without calling the handler.
+- Neither number includes HTTP parsing or a response. An `express()` app also adds its own middleware, which these leave out.
+- Express tests routes one at a time, so its cost grows with the table and depends on route order. The routes are registered in file order. On a URL matching two routes, Express takes the first registered, and this router takes the highest ranked. No URL in the test did.
+- Express 4 takes the route strings as they are. Express 5 dropped that syntax, so each route is registered as one `RegExp`, which is how it validates.
+
+Express's code didn't change between comparison runs, and its numbers still moved by up to 4%, so treat these as approximate.
 
 ## Development
 

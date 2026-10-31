@@ -15,6 +15,8 @@ const routerNames = [
   'balancing-router',
   baselineRouter,
   'path-to-regexp-linear',
+  'express@4',
+  'express@5',
 ];
 
 function run(command, args, options = {}) {
