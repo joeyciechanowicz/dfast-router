@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { compile, profile, buildTable, codegen, instantiate, buildPathTree, codegenHot, instantiateHot, compile2, codegen2, buildFast } from "./rc.mjs";
 export const R = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const require = createRequire(R + "/package.json");
-const { createMedleyRouter } = require(R + "/dist/index.js");
+const Medley = require("@medley/router");
 const h = () => {};
 export const safe = (p) => p.replace(/:([A-Za-z0-9_]+)\([^)]*\)/g, ":$1");
 const newStore = () => ({ GET: h, POST: undefined, PUT: undefined, DELETE: undefined, PATCH: undefined });
@@ -19,11 +19,11 @@ export function build(name, routes, trainUrls) {
   const pats = patternsOf(routes);
   switch (name) {
     case "medley-as-benched": { // the number the repo currently reports
-      const r = createMedleyRouter(); for (const x of routes) r.register(x.path).GET = h;
+      const r = new Medley(); for (const x of routes) r.register(x.path).GET = h;
       return (u) => r.find(u);
     }
     case "medley-fair": { // same router, but given routes it can actually match
-      const r = createMedleyRouter();
+      const r = new Medley();
       const seen = new Set();
       for (const x of pats) { const p = safe(x.path); if (seen.has(p)) continue; seen.add(p); const st = r.register(p); st.GET = h; st.__route = x.route; }
       return (u) => r.find(u);

@@ -61,9 +61,18 @@ if (localPrecomputedUrlsModule) {
 }
 
 export const routeSetName = moduleRoutes ? "module" : "generic";
+export const routesSource = moduleRoutes ? localRoutesModule : "./bench/routes-generic.mjs";
 export const routes = moduleRoutes ?? genericRoutes;
 const notFoundProbability = 0.05;
 const precomputedSourceUrls = modulePrecomputedUrls ?? genericPrecomputedUrls;
+
+function findUrlsSource() {
+  if (!Array.isArray(precomputedSourceUrls)) return "generated from the routes";
+  if (modulePrecomputedUrls === null) return "./bench/routes-generic.urls.mjs";
+  return localPrecomputedUrlsModule ?? localRoutesModule;
+}
+
+export const urlsSource = findUrlsSource();
 
 function normalizePathLike(path) {
   if (!path) return "/";

@@ -10,10 +10,9 @@ const compareTime = Number(process.env.BENCH_COMPARE_TIME || 5000);
 const compareRuns = Number(process.env.BENCH_COMPARE_RUNS || 3);
 // Anything else on the command line goes to bench.mjs: `npm run bench:compare -- --corpus near404`.
 const benchArgs = process.argv.slice(2);
-const baselineRouter = 'medley-router-local';
+const baselineRouter = '@medley/router';
 const routerNames = [
   'balancing-router',
-  '@medley/router',
   baselineRouter,
   'path-to-regexp-linear',
 ];

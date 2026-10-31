@@ -121,21 +121,60 @@ Residual routes still work and keep their priority, but they can backtrack, so a
 
 A param regex that can't compile works the same way: the route still ranks normally, and a match is confirmed with `RegExp`.
 
+## How it works
+
+The route table compiles once, on `compile()` or the first `find`. Every route goes into the same DFA, so routes that share a prefix share states:
+
+```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 400}}}%%
+flowchart TD
+  P["Pattern route<br/>/users/:id?"] --> V["Expand into variants<br/>and rank them"]
+  V --> A["Regex AST"]
+  X["RegExp route"] --> C{"Can the DFA hold it?"}
+  C -- yes --> A
+  C -- no --> S["Residual route<br/>kept as a RegExp"]
+  A --> N["Thompson NFA of all routes"]
+  N --> D["Subset construction into one DFA"]
+  D --> M["Hopcroft minimization"]
+  M --> T["Typed arrays: transitions,<br/>character classes, accept rows"]
+```
+
+A lookup then walks that table one character at a time. The route count doesn't change the number of steps, and the winning route was already decided at compile time, so a normal lookup only reads its result from the accept row:
+
+```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 400}}}%%
+flowchart TD
+  F["find(method, path)"] --> L["Read the next character<br/>x = table[state][class]"]
+  L --> Q{"What is x?"}
+  Q -- "next state" --> L
+  Q -- "scan state" --> S["slow: skip a long param or<br/>wildcard tail, or step over<br/>a non-ASCII character"]
+  S --> L
+  Q -- "end of path, or ?" --> R["Read the accept row<br/>for this state and method"]
+  Q -- "dead end" --> G
+  R --> C{"Certain result?"}
+  C -- yes --> H["Return the handler and store<br/>Params are built on first read"]
+  C -- no --> G["miss: test candidates and<br/>residual routes with RegExp"]
+  G -- match --> H
+  G -- "no match" --> N["Return null"]
+```
+
+`how-it-works.md` explains the design.
+
 ## Performance
 
-Measured with `bench/bench.mjs` on an Apple M1 Pro with Node 22, best of 3 seeds. The URLs are fresh strings, as a real `req.url` would be, and `medley` is `medley-router-local`, a TypeScript copy of `@medley/router`, given routes it can match. Lookups slow down as the table grows and stops fitting in cache: 95ns at 100 routes, and 206ns at 3,000.
+Measured with `bench/bench.mjs` on an Apple M1 Pro with Node 22, best of 3 seeds. The URLs are fresh strings, as a real `req.url` would be, and `@medley/router` is given routes it can match. Lookups slow down as the table grows and stops fitting in cache: 95ns at 100 routes, and 166ns at 3,000.
 
-| Traffic | Params | balancing-router | medley | Ratio |
+| Traffic | Params | balancing-router | @medley/router | Ratio |
 |---|---|---:|---:|---:|
-| 34 routes, shuffled | not read | 20.5M/s (49ns) | 6.9M/s (145ns) | 3.0× |
-| 34 routes, shuffled | read | 13.8M/s (72ns) | 6.8M/s (148ns) | 2.0× |
-| Near-miss 404s | read | 18.5M/s (54ns) | 7.7M/s (130ns) | 2.4× |
-| Query strings | read | 12.6M/s (80ns) | 6.9M/s (145ns) | 1.82× |
-| 36-character params | read | 12.2M/s (82ns) | 7.0M/s (144ns) | 1.75× |
-| 200-character params | read | 11.9M/s (84ns) | 6.8M/s (148ns) | 1.76× |
-| 3,000 REST routes | read | 206ns | 330ns | 1.6× |
+| 34 routes, shuffled | not read | 20.5M/s (49ns) | 6.9M/s (144ns) | 2.96× |
+| 34 routes, shuffled | read | 14.2M/s (71ns) | 6.8M/s (148ns) | 2.10× |
+| Near-miss 404s | read | 17.8M/s (56ns) | 7.7M/s (130ns) | 2.32× |
+| Query strings | read | 12.2M/s (82ns) | 6.7M/s (150ns) | 1.83× |
+| 36-character params | read | 12.0M/s (83ns) | 6.7M/s (149ns) | 1.78× |
+| 200-character params | read | 11.4M/s (88ns) | 6.4M/s (156ns) | 1.78× |
+| 3,000 REST routes | read | 166ns | 282ns | 1.71× |
 
-Compiling 3,000 REST routes takes about 0.1s. These numbers come from a machine that wasn't fully idle, and from one CPU. `how-it-works.md` explains the design.
+Compiling 3,000 REST routes takes about 0.1s. These numbers come from a machine that wasn't fully idle, and from one CPU.
 
 ## Development
 

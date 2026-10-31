@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { buildCorpus } from "./corpus.mjs";
 import { createReference } from "./reference.mjs";
-import { routes, precomputedUrls } from "./routes.mjs";
+import { routes, precomputedUrls, routesSource, urlsSource } from "./routes.mjs";
 
 const require = createRequire(import.meta.url);
 const here = dirname(fileURLToPath(import.meta.url));
@@ -14,6 +14,7 @@ const args = new Set(process.argv.slice(2));
 const jsonOutput = args.has("--json");
 const asyncMode = args.has("--async");
 const readParams = args.has("--read-params");
+const printUrls = args.has("--print-urls");
 const internedStrings = args.has("--interned");
 const corpusIndex = process.argv.indexOf("--corpus");
 const corpusName = corpusIndex !== -1 ? process.argv[corpusIndex + 1] : "clean";
@@ -57,7 +58,7 @@ function loadRouter() {
   return require(resolve(root, "dist", "index.js"));
 }
 
-const { createRouter, createMedleyRouter } = loadRouter();
+const { createRouter } = loadRouter();
 function logBuildError(name, error) {
   const message = error && error.stack ? error.stack : String(error);
   console.error(`[bench] ${name} setup failed:\n${message}`);
@@ -75,6 +76,7 @@ function getRequest(method, path) {
 
 const METHOD = "GET";
 const WARMUP_ROUNDS = 50000;
+const URL_SAMPLE_SIZE = 10;
 const HIT_SAMPLE_SIZE = 100_000;
 const HIT_RATE_TOLERANCE = 0.1;
 
@@ -232,23 +234,6 @@ function buildMedleyRouter() {
   }
 }
 
-function buildMedleyRouterLocal() {
-  if (typeof createMedleyRouter !== "function") return null;
-  const router = createMedleyRouter();
-  for (const [method, path, handler] of frameworkRouteFixtures) {
-    const store = router.register(toMedleyPattern(path));
-    store[method] = handler;
-  }
-  return {
-    lookup: (method, path) => {
-      const match = router.find(path);
-      if (!match) return null;
-      const handler = match.store[method] ?? match.store["*"] ?? null;
-      return handler === null ? null : match;
-    },
-  };
-}
-
 function buildPathToRegexpLinear() {
   try {
     const { match } = require("path-to-regexp");
@@ -342,7 +327,10 @@ function measureHitRates(routers) {
       if (!hit && expected[i]) underMatched += 1;
     }
     const rate = {
-      hitRate: percentOf(referenceHits + overMatched - underMatched, sample.length),
+      hitRate: percentOf(
+        referenceHits + overMatched - underMatched,
+        sample.length,
+      ),
       referenceHitRate: percentOf(referenceHits, sample.length),
       overMatch: percentOf(overMatched, sample.length),
       underMatch: percentOf(underMatched, sample.length),
@@ -355,7 +343,9 @@ function measureHitRates(routers) {
     );
   }
 
-  const failed = [...rates].filter(([, rate]) => rate.underMatch > HIT_RATE_TOLERANCE);
+  const failed = [...rates].filter(
+    ([, rate]) => rate.underMatch > HIT_RATE_TOLERANCE,
+  );
   if (failed.length > 0) {
     const names = failed.map(([name]) => name).join(", ");
     throw new Error(
@@ -405,7 +395,6 @@ async function runBenchmarks() {
   const routerBuilders = [
     ["balancing-router", () => buildBalancingRouter()],
     ["@medley/router", () => buildMedleyRouter()],
-    ["medley-router-local", () => buildMedleyRouterLocal()],
     ["path-to-regexp-linear", () => buildPathToRegexpLinear()],
   ];
 
@@ -461,15 +450,38 @@ async function runBenchmarks() {
   return results.sort((a, b) => a.hz - b.hz);
 }
 
-const results = await runBenchmarks();
-if (jsonOutput) {
-  console.log(
-    JSON.stringify({ results, seed, corpus: corpusName, readParams }, null, 2),
+// On stderr, so that `--json` output stays valid.
+function logCorpus() {
+  console.error(`[bench] routes: ${routesSource} (${routes.length} routes)`);
+  console.error(
+    `[bench] urls: ${urlsSource}, ${corpusName} corpus, ${replayCorpus.length.toLocaleString()} lookups`,
   );
-} else if (results) {
-  for (const result of results) {
+  console.error(`[bench] first ${URL_SAMPLE_SIZE} urls:`);
+  for (const url of replayCorpus.slice(0, URL_SAMPLE_SIZE)) console.error(`[bench]   ${url}`);
+}
+
+if (printUrls) {
+  // `| head` closes the pipe early, which isn't a failure.
+  process.stdout.on("error", (error) => {
+    if (error.code !== "EPIPE") throw error;
+  });
+  console.log(replayCorpus.join("\n"));
+} else {
+  logCorpus();
+  await report();
+}
+
+async function report() {
+  const results = await runBenchmarks();
+  if (jsonOutput) {
     console.log(
-      `${result.name}: ${Math.round(result.hz).toLocaleString()} ops/sec (samples: ${result.samples}, rme: ${result.rme.toFixed(2)}%)`,
+      JSON.stringify({ results, seed, corpus: corpusName, readParams }, null, 2),
     );
+  } else if (results) {
+    for (const result of results) {
+      console.log(
+        `${result.name}: ${Math.round(result.hz).toLocaleString()} ops/sec (samples: ${result.samples}, rme: ${result.rme.toFixed(2)}%)`,
+      );
+    }
   }
 }

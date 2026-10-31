@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { compile, buildFast } from "./rc.mjs";
 const R = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
-const { createMedleyRouter } = createRequire(R + "/package.json")(R + "/dist/index.js");
+const Medley = createRequire(R + "/package.json")("@medley/router");
 function rng(seed) { let x = seed; return () => (x = (x * 1664525 + 1013904223) >>> 0) / 4294967296; }
 const syll = ["ac","ver","sub","tion","pro","file","or","der","us","er","re","port","com","ment","in","voice","con","fig","data","meta"];
 function word(r) { let w = ""; const k = 2 + Math.floor(r() * 3); for (let i = 0; i < k; i++) w += syll[Math.floor(r() * syll.length)]; return w; }
@@ -46,7 +46,7 @@ for (const n of sizes) {
   if (noMin) continue;
   const stores = pats.map(() => ({ GET: 1 }));
   const fast = buildFast(dfa, stores, { train: [], mode: "eager", gallop: 8, after: 8, tail: true });
-  const med = createMedleyRouter(); let conflict = null;
+  const med = new Medley(); let conflict = null;
   try { for (const p of pats) med.register(p).GET = 1; } catch (e) { conflict = e.message.split("\n")[0].slice(0, 60); }
   const a = measure(fast, urls), b = conflict ? NaN : measure((u) => med.find(u), urls);
   console.log(`${kind.padEnd(7)} routes=${String(n).padStart(5)}  nfa=${String(dfa.nfaStates).padStart(7)} raw=${String(dfa.rawStates).padStart(6)} min=${String(dfa.states).padStart(6)} cls=${String(dfa.nc).padStart(3)}  table=${String(fast.meta.tableKB).padStart(8)}KB  compile=${(t1 - t0).toFixed(0).padStart(7)}ms  dfa=${a.toFixed(1).padStart(6)}ns  medley=${conflict ? "n/a (param-name conflict)" : b.toFixed(1) + "ns"}`);

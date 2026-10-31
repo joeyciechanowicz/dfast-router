@@ -1,7 +1,7 @@
 const { dist, expand } = require("./shim-common.cjs");
 const { compile, buildFast } = require("./rc.mjs");
 const MODE = process.env.DFA_MODE ?? "eager";
-function createMedleyRouter() {
+function createDfa() {
   const routes = []; let find = null;
   return {
     register(path) { const store = { GET: undefined, POST: undefined, "*": undefined }; routes.push({ path, store }); find = null; return store; },
@@ -17,7 +17,7 @@ function createMedleyRouter() {
 // The "balancing-router" slot. Results keep the prototype's { store, params } shape, not RouteMatch:
 // wrapping them would add an allocation per hit, and the bench reads only null and `.params`.
 function createRouter() {
-  const dfa = createMedleyRouter(); const stores = new Map();
+  const dfa = createDfa(); const stores = new Map();
   const router = {
     on(method, path, handler) {
       if (!stores.has(path)) stores.set(path, dfa.register(path));
@@ -33,4 +33,4 @@ function createRouter() {
   };
   return router;
 }
-module.exports = { ...dist, createMedleyRouter, createRouter };
+module.exports = { ...dist, createRouter };

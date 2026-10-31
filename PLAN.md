@@ -6,7 +6,7 @@ Replace the deleted router in `src/` with one DFA compiled from the whole route 
 
 ## Goal
 
-Be measurably faster than `medley-router-local` while doing the same routing work.
+Be measurably faster than medley while doing the same routing work. The tables below were measured against `medley-router-local`, a TypeScript copy of `@medley/router`. That copy was removed after G4, and the bench now uses `@medley/router` itself. On the generic routes the ratios match: see the [progress log](#progress-log).
 
 | Router (`bench.mjs`, generic routes) | ops/s | ns | Hit rate |
 |---|---:|---:|---:|
@@ -32,7 +32,7 @@ These are settled for this plan. Changing one after G2 means reworking finished 
 | D5 | Static-route results are shared and frozen | No allocation on static hits. Handlers must not mutate `params`. |
 | D6 | Regex routes expose named groups (`(?<id>\d+)`) as params | Old regex routes returned empty params. Numbered groups stay unexposed. |
 | D7 | No URL cache | The old GET cache only looks good because bench URLs are internalized literals with cached hashes. |
-| D8 | `createMedleyRouter` stays exported, marked as a bench baseline | The bench needs it. |
+| D8 | `@medley/router` is the bench baseline, and the local copy is gone | Changed after G4: the published package is the same algorithm, so nothing needs a copy. |
 | D9 | A route that expands to more than 256 variants throws at registration | Optional segments double the variants. A clear error is simpler than a second code path. |
 | D10 | Paths containing a non-ASCII character are confirmed with `RegExp` | All such characters share one DFA symbol, which can't separate `/café` from `/cafü` or express `.` exactly. See [Non-ASCII paths](#non-ascii-paths). |
 | D11 | Registering a variant that already exists for a method replaces it, keeping its position | Matches the old routers and medley. It applies per variant: `/a` replaces the shorter variant of an earlier `/a/:x?`. |
@@ -95,12 +95,11 @@ Alias regexes, derived from the old validator functions:
 
 ```
 src/
-  index.ts             createRouter, Router, types, createMedleyRouter
+  index.ts             createRouter, Router, types
   types.ts             public types
   router.ts            on(), find(), compile(), method table
   matcher.ts           hot loop and slow continuation (the only perf-critical file)
   match.ts             Match class, prebuilt static results
-  medley-router.ts     restored bench baseline
   compiler/
     types.ts           shared compiler types (frozen in WP-1)
     charset.ts         129-symbol sets: ASCII plus one bucket for everything else
@@ -730,7 +729,7 @@ The two narrow misses are on a gate set from the prototype in a lighter harness.
 | `status.mjs` | V8 tier check; run with `--allow-natives-syntax` |
 | `prims.mjs` | String primitive microbenchmarks |
 | `hitrate.mjs` | Router hit rates on the corpus |
-| `shim-common.cjs`, `shim-dfa.cjs`, `shim-medley-fair.cjs` | Plug routers into `bench.mjs` via `--router` |
+| `shim-common.cjs`, `shim-dfa.cjs` | Plug the prototype into `bench.mjs` via `--router` |
 
 `tail-eager` and `tail-lazy` are the final design, and `medley-fair` is the honest baseline. `tail-eager` builds params during `find`, and `tail-lazy` defers them.
 
@@ -765,3 +764,4 @@ Record every package and gate here.
 | 2026-10-30 | WP-11 | 3600bd0 | | | | | Inexact-only confirmation and `byteLength` (token200 0.94× to 1.76×); shared extractors (3000 routes 1.31× to 1.46×); no chains past 1,500 states; CSP fallback; wildcard tails (418ns to 53ns). x86-64 not run |
 | 2026-10-30 | G4 | 3600bd0 | 20.52M unread, 13.84M read | 6.90M, 6.76M | 2.97×, 2.05× | 94.95% | See [Acceptance criteria](#acceptance-criteria). Two narrow misses, one item open |
 | 2026-10-30 | WP-12 | | | | | | Docs done. Deleting `prototype/` and this plan held back for the open items |
+| 2026-10-31 | Baseline swap | | 20.53M unread, 14.15M read | 6.93M, 6.75M | 2.96×, 2.10× | 94.95% | Against `@medley/router`, generic routes. Long params 1.78×, 3000 routes 1.71× |
