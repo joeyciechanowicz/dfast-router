@@ -183,4 +183,4 @@ Compiling 3,000 REST routes takes about 0.1s. These numbers come from a machine 
 - Differential test on the full corpus: `npm run test:consistency`
 - Benchmarks: `npm run bench`, or `npm run bench:compare` against the previous commit
 
-`bench.mjs` flags include `--only <router>`, `--read-params`, `--corpus near404|query|uuid36|token200`, and `--time <ms>`.
+`bench.mjs` flags include `--only <router>`, `--read-params`, `--corpus near404|query|uuid36|token200`, `--404-percent <n>`, and `--time <ms>`. `--404-percent` replaces that share of the lookups with near-miss URLs that match no route. The corpus's own misses are extra, about 5% of `clean`.

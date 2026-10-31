@@ -2,7 +2,7 @@ import { bench, measure, run } from "mitata";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import { buildCorpus } from "./corpus.mjs";
+import { buildCorpus, injectNotFound } from "./corpus.mjs";
 import { createReference } from "./reference.mjs";
 import { routes, precomputedUrls, routesSource, urlsSource } from "./routes.mjs";
 
@@ -18,6 +18,12 @@ const printUrls = args.has("--print-urls");
 const internedStrings = args.has("--interned");
 const corpusIndex = process.argv.indexOf("--corpus");
 const corpusName = corpusIndex !== -1 ? process.argv[corpusIndex + 1] : "clean";
+const notFoundIndex = process.argv.indexOf("--404-percent");
+const notFoundPercent =
+  notFoundIndex !== -1 ? Number(process.argv[notFoundIndex + 1]) : 0;
+if (!(notFoundPercent >= 0 && notFoundPercent <= 100)) {
+  throw new Error("[bench] --404-percent takes a number from 0 to 100");
+}
 const timeIndex = process.argv.indexOf("--time");
 const timeArg = timeIndex !== -1 ? Number(process.argv[timeIndex + 1]) : null;
 const benchTime = Number.isFinite(timeArg) && timeArg > 0 ? timeArg : 1000;
@@ -192,9 +198,22 @@ function toFreshString(path) {
   return Buffer.from(path, "latin1").toString("latin1");
 }
 
+function withInjectedNotFound(urls) {
+  if (notFoundPercent === 0) return urls;
+  const reference = createReference(routeDefinitions);
+  return injectNotFound(
+    urls,
+    notFoundPercent,
+    (url) => reference(url, METHOD) === null,
+    createRng(seed ^ 0x2b7e1516),
+  );
+}
+
 // near404 can drop a URL's leading `/`. It's restored here because the reference adds it back but
 // medley rejects such a URL, so the routers would otherwise differ on URLs no client sends.
-const replayCorpus = buildCorpus(corpusName, fullRequestCorpus).map((url) => {
+const replayCorpus = withInjectedNotFound(
+  buildCorpus(corpusName, fullRequestCorpus),
+).map((url) => {
   const path = normalizeLookupPath(url);
   return internedStrings ? path : toFreshString(path);
 });
@@ -453,8 +472,9 @@ async function runBenchmarks() {
 // On stderr, so that `--json` output stays valid.
 function logCorpus() {
   console.error(`[bench] routes: ${routesSource} (${routes.length} routes)`);
+  const injected = notFoundPercent > 0 ? `, ${notFoundPercent}% replaced with 404s` : "";
   console.error(
-    `[bench] urls: ${urlsSource}, ${corpusName} corpus, ${replayCorpus.length.toLocaleString()} lookups`,
+    `[bench] urls: ${urlsSource}, ${corpusName} corpus${injected}, ${replayCorpus.length.toLocaleString()} lookups`,
   );
   console.error(`[bench] first ${URL_SAMPLE_SIZE} urls:`);
   for (const url of replayCorpus.slice(0, URL_SAMPLE_SIZE)) console.error(`[bench]   ${url}`);
@@ -475,7 +495,11 @@ async function report() {
   const results = await runBenchmarks();
   if (jsonOutput) {
     console.log(
-      JSON.stringify({ results, seed, corpus: corpusName, readParams }, null, 2),
+      JSON.stringify(
+        { results, seed, corpus: corpusName, notFoundPercent, readParams },
+        null,
+        2,
+      ),
     );
   } else if (results) {
     for (const result of results) {
