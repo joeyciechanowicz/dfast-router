@@ -673,3 +673,15 @@ test('the default budget holds a heavily overlapping table, in a 32-bit table', 
     assert.equal(router.find('GET', longer) === null, reference(longer) === null, longer);
   });
 });
+
+test('every char code past ASCII takes the same path through the table', () => {
+  const router = createRouter();
+  router.on('GET', '/caf/:name', noop);
+  router.on('GET', '/static', noop);
+  for (const code of [0x80, 0xff, 0x100, 0x2028, 0xd800, 0xffff]) {
+    const char = String.fromCharCode(code);
+    assert.equal(router.find('GET', `/caf/${char}`)?.params.name, char);
+    assert.equal(router.find('GET', `/static${char}`), null);
+  }
+  assert.equal(router.find('GET', '/caf/\u007f')?.params.name, '\u007f');
+});

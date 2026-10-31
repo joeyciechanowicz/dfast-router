@@ -1,6 +1,9 @@
 import { Match } from './match';
+import { NON_ASCII } from './compiler/types';
 import type { Extractor, Miss, Results, Table } from './compiler/types';
 import type { RouteMatch } from './types';
+
+const CHAR_CODES = 0x10000;
 
 /**
  * Whether `s` holds a character above ASCII, which always takes more than one UTF-8 byte. Over 200
@@ -20,7 +23,9 @@ export function createMatcher(
   table: Table, results: Results, miss: Miss,
 ): (path: string, method: number) => RouteMatch | null {
   const TT = table.tt;
-  const CLS = table.cls;
+  // By char code, so that V8 can prove every read in bounds and `find` needs no check for non-ASCII.
+  const CLS = new Uint8Array(CHAR_CODES).fill(table.cls[NON_ASCII]);
+  CLS.set(table.cls.subarray(0, NON_ASCII));
   const K = table.shift;
   const START = table.start;
   const STOP = table.stop;
@@ -97,7 +102,7 @@ export function createMatcher(
       x = 0;
       for (; i < n; i++) {
         const c = s.charCodeAt(i);
-        x = TT[(st << K) + CLS[c < 128 ? c : 128]];
+        x = TT[(st << K) + CLS[c]];
         if (x >= STOP) break;
         st = x;
       }
@@ -119,7 +124,7 @@ export function createMatcher(
     let x = 0;
     for (; i < n; i++) {
       const c = s.charCodeAt(i);
-      x = TT[(st << K) + CLS[c < 128 ? c : 128]];
+      x = TT[(st << K) + CLS[c]];
       if (x >= STOP) break;
       st = x;
     }

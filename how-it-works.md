@@ -28,13 +28,13 @@ So routing branches aren't generated. That also avoids V8's 61,440-byte limit on
 ```ts
 for (; i < n; i++) {
   const c = s.charCodeAt(i);
-  x = TT[(st << K) + CLS[c < 128 ? c : 128]];
+  x = TT[(st << K) + CLS[c]];
   if (x >= STOP) break;
   st = x;
 }
 ```
 
-`CLS` compresses the alphabet into classes of symbols no route tells apart, which keeps rows short. `x >= STOP` is the only check per character. Everything rare leaves through it, by the value in the table:
+`CLS` compresses the alphabet into classes of symbols no route tells apart, which keeps rows short. It has an entry for every char code, so V8 drops its bounds check, and a non-ASCII character takes no branch. `x >= STOP` is the only check per character. Everything rare leaves through it, by the value in the table:
 
 | Value of `x` | Meaning |
 |---|---|
