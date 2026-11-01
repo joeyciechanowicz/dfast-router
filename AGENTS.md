@@ -39,6 +39,10 @@ This repo uses an iterative, benchmark- and profiler-driven workflow. Every perf
 - `npm run bench` (default 1000ms)
 - `node bench/bench.mjs --time 3000`
 - `npm run bench:compare`
+- `npm run bench -- --routes specific` (pick a route set; the default is `generic`, and `bench:compare` takes it too)
+- `npm run bench:compare -- --time 1000 --runs 1`
+
+Scripts in this repo take flags, not environment variables. `bench/flags.mjs` reads them.
 
 ## Definition of Done for Perf Changes
 

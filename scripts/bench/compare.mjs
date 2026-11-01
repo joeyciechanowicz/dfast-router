@@ -2,12 +2,14 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { takeNumberFlag } from '../../bench/flags.mjs';
 
 const root = process.cwd();
 const tscPath = resolve(root, 'node_modules', 'typescript', 'bin', 'tsc');
 const typeRoots = resolve(root, 'node_modules', '@types');
-const compareTime = Number(process.env.BENCH_COMPARE_TIME || 5000);
-const compareRuns = Number(process.env.BENCH_COMPARE_RUNS || 3);
+const compareTime = takeNumberFlag('--time', 5000);
+const compareRuns = takeNumberFlag('--runs', 3);
+const seed = takeNumberFlag('--seed', Date.now());
 // Anything else on the command line goes to bench.mjs: `npm run bench:compare -- --corpus near404`.
 const benchArgs = process.argv.slice(2);
 const baselineRouter = '@medley/router';
@@ -122,7 +124,6 @@ function printResults(current, previous) {
 }
 
 const previousIndex = getPreviousIndex();
-const seed = process.env.BENCH_SEED ? Number(process.env.BENCH_SEED) : Date.now();
 if (!previousIndex) {
   console.log('No previous commit found. Running current benchmarks only.');
   printResults(bestOfRuns());

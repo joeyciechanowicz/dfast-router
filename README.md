@@ -205,4 +205,8 @@ Express's code didn't change between comparison runs, and its numbers still move
 - Differential test on the full corpus: `npm run test:consistency`
 - Benchmarks: `npm run bench`, or `npm run bench:compare` against the previous commit
 
-`bench.mjs` flags include `--only <router>`, `--read-params`, `--corpus near404|query|uuid36|token200`, `--404-percent <n>`, and `--time <ms>`. `--404-percent` replaces that share of the lookups with near-miss URLs that match no route. The corpus's own misses are extra, about 5% of `clean`.
+`bench.mjs` flags include `--only <router>`, `--routes <set>`, `--read-params`, `--corpus near404|query|uuid36|token200`, `--404-percent <n>`, and `--time <ms>`. `--404-percent` replaces that share of the lookups with near-miss URLs that match no route. The corpus's own misses are extra, about 5% of `clean`.
+
+`--routes` takes a name, so `--routes generic` (the default) loads `bench/routes-generic.mjs`, or a path to a routes module. The URLs come from the `.urls.mjs` file next to that module, or are generated from its routes if there isn't one. `--urls <path>` overrides them.
+
+`npm run bench:compare` takes `--time <ms>`, `--runs <n>`, and `--seed <n>`, and passes everything else to `bench.mjs`: `npm run bench:compare -- --routes generic --corpus near404`.

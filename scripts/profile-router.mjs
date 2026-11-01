@@ -1,11 +1,12 @@
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
+import { takeFlag, takeNumberFlag } from '../bench/flags.mjs';
 import { routes } from '../bench/routes-generic.mjs';
 
 const require = createRequire(import.meta.url);
 const root = process.cwd();
 const routerModule = require(resolve(root, 'dist', 'index.js'));
-const routerFactoryName = process.env.PROFILE_ROUTER_FACTORY || 'createRouter';
+const routerFactoryName = takeFlag('--factory') ?? 'createRouter';
 const createRouter = routerModule[routerFactoryName];
 if (typeof createRouter !== 'function') {
   throw new Error(`Unknown router factory: ${routerFactoryName}`);
@@ -67,10 +68,10 @@ for (const route of routes) {
   router.on('GET', route.path, () => {});
 }
 
-const seed = Number(process.env.PROFILE_SEED ?? Date.now());
-const lookupsPerIteration = Number(process.env.PROFILE_LOOKUPS ?? 128);
+const seed = takeNumberFlag('--seed', Date.now());
+const lookupsPerIteration = takeNumberFlag('--lookups', 128);
 const lookups = buildLookups(routes, createRng(seed ^ 0x9e3779b9), lookupsPerIteration);
-const iterations = Number(process.env.PROFILE_ITERS ?? 200000);
+const iterations = takeNumberFlag('--iters', 200000);
 
 for (let i = 0; i < iterations; i += 1) {
   for (let j = 0; j < lookups.length; j += 1) {

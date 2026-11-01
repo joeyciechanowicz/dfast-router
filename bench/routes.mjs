@@ -1,75 +1,47 @@
+import { existsSync } from "node:fs";
+import { relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { resolve } from "node:path";
-import { routes as genericRoutes, precomputedUrls as genericPrecomputedUrls } from "./routes-generic.mjs";
+import { findRoutesFile, siblingUrlsFile, takeFlag } from "./flags.mjs";
 
-export const availableRouteSets = ["generic", "module"];
-
-const localRoutesModule = process.env.BENCH_ROUTES_MODULE;
-const localPrecomputedUrlsModule = process.env.BENCH_PRECOMPUTED_URLS_MODULE;
-let moduleRoutes = null;
-let modulePrecomputedUrls = null;
-
-if (localRoutesModule) {
-  const moduleUrl = localRoutesModule.startsWith(".") || localRoutesModule.startsWith("/")
-    ? pathToFileURL(resolve(process.cwd(), localRoutesModule)).href
-    : localRoutesModule;
-  try {
-    const module = await import(moduleUrl);
-    if (Array.isArray(module.routes)) {
-      moduleRoutes = module.routes;
-      if (Array.isArray(module.precomputedUrls)) {
-        modulePrecomputedUrls = module.precomputedUrls;
-      }
-    } else {
-      console.warn(
-        `[bench] BENCH_ROUTES_MODULE="${localRoutesModule}" has no exported "routes" array. Falling back to generic routes.`,
-      );
-    }
-  } catch (error) {
-    const message = error && error.message ? error.message : String(error);
-    console.warn(
-      `[bench] Failed to load BENCH_ROUTES_MODULE="${localRoutesModule}": ${message}. Falling back to generic routes.`,
-    );
-  }
-} else if (process.env.BENCH_ROUTE_SET && process.env.BENCH_ROUTE_SET !== "generic") {
-  console.warn(
-    `[bench] BENCH_ROUTE_SET is deprecated. Use BENCH_ROUTES_MODULE to load a local routes module.`,
-  );
+function displayPath(file) {
+  return relative(process.cwd(), file);
 }
 
-if (localPrecomputedUrlsModule) {
-  const moduleUrl =
-    localPrecomputedUrlsModule.startsWith(".") ||
-    localPrecomputedUrlsModule.startsWith("/")
-      ? pathToFileURL(resolve(process.cwd(), localPrecomputedUrlsModule)).href
-      : localPrecomputedUrlsModule;
-  try {
-    const module = await import(moduleUrl);
-    if (Array.isArray(module.precomputedUrls)) {
-      modulePrecomputedUrls = module.precomputedUrls;
-    } else {
-      console.warn(
-        `[bench] BENCH_PRECOMPUTED_URLS_MODULE="${localPrecomputedUrlsModule}" has no exported "precomputedUrls" array.`,
-      );
-    }
-  } catch (error) {
-    const message = error && error.message ? error.message : String(error);
-    console.warn(
-      `[bench] Failed to load BENCH_PRECOMPUTED_URLS_MODULE="${localPrecomputedUrlsModule}": ${message}`,
-    );
-  }
+async function importFile(file) {
+  if (!existsSync(file)) throw new Error(`[bench] ${displayPath(file)} does not exist`);
+  return import(pathToFileURL(file).href);
 }
 
-export const routeSetName = moduleRoutes ? "module" : "generic";
-export const routesSource = moduleRoutes ? localRoutesModule : "./bench/routes-generic.mjs";
-export const routes = moduleRoutes ?? genericRoutes;
+// Everything that imports this module gets the route set picked by `--routes`.
+const routesFile = findRoutesFile(takeFlag("--routes") ?? "generic");
+const urlsFlag = takeFlag("--urls");
+const routesModule = await importFile(routesFile);
+if (!Array.isArray(routesModule.routes)) {
+  throw new Error(`[bench] ${displayPath(routesFile)} has no exported "routes" array`);
+}
+
+// A route set's URLs sit next to it. Another set's URLs would miss most routes and still pass the
+// hit rate check, because the reference runs on the same URLs. Only `--urls` overrides this.
+function findUrlsFile() {
+  if (urlsFlag) return resolve(process.cwd(), urlsFlag);
+  const sibling = siblingUrlsFile(routesFile);
+  return existsSync(sibling) ? sibling : null;
+}
+
+const urlsFile = findUrlsFile();
+const urlsModule = urlsFile ? await importFile(urlsFile) : routesModule;
+if (urlsFile && !Array.isArray(urlsModule.precomputedUrls)) {
+  throw new Error(`[bench] ${displayPath(urlsFile)} has no exported "precomputedUrls" array`);
+}
+
+export const routesSource = displayPath(routesFile);
+export const routes = routesModule.routes;
 const notFoundProbability = 0.05;
-const precomputedSourceUrls = modulePrecomputedUrls ?? genericPrecomputedUrls;
+const precomputedSourceUrls = urlsModule.precomputedUrls;
 
 function findUrlsSource() {
   if (!Array.isArray(precomputedSourceUrls)) return "generated from the routes";
-  if (modulePrecomputedUrls === null) return "./bench/routes-generic.urls.mjs";
-  return localPrecomputedUrlsModule ?? localRoutesModule;
+  return displayPath(urlsFile ?? routesFile);
 }
 
 export const urlsSource = findUrlsSource();

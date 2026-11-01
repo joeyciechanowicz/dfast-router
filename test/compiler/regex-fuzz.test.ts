@@ -3,12 +3,14 @@ import assert from 'node:assert/strict';
 import { parseFragment, parseRegExp } from '../../src/compiler/regex-parser';
 import { ALPHABET, QMARK } from '../../src/compiler/types';
 import type { Ast, Parsed } from '../../src/compiler/types';
+import { takeNumberFlag } from '../../bench/flags.mjs';
 import { astMatches } from '../helpers/ast-match';
 
 // Every regex is checked against `RegExp` on a mix of random strings and strings built to match it.
-// Reproduce a failure with FUZZ_SEED=<seed>. FUZZ_PAIRS sets the pairs per test.
-const SEED = Number(process.env.FUZZ_SEED ?? 20261030);
-const PAIRS = Number(process.env.FUZZ_PAIRS ?? 150_000);
+// Reproduce a failure with `tsx test/compiler/regex-fuzz.test.ts --seed <seed>`. --pairs sets the
+// pairs per test. Both need that direct run, because `npm test` passes no flags to test files.
+const SEED = takeNumberFlag('--seed', 20261030);
+const PAIRS = takeNumberFlag('--pairs', 150_000);
 const MAX_INPUT = 14;
 
 function mulberry32(seed: number): () => number {

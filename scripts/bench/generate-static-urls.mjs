@@ -1,7 +1,8 @@
 import { createWriteStream } from "node:fs";
 import { once } from "node:events";
-import { resolve, dirname, basename } from "node:path";
+import { relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { findRoutesFile, siblingUrlsFile, takeFlag, takeNumberFlag } from "../../bench/flags.mjs";
 
 function createRng(initial) {
   let value = initial >>> 0;
@@ -20,39 +21,20 @@ function normalizePath(path) {
   return `/${path}`;
 }
 
-function resolveModuleUrl(modulePath) {
-  if (modulePath.startsWith(".") || modulePath.startsWith("/")) {
-    return pathToFileURL(resolve(process.cwd(), modulePath)).href;
-  }
-  return modulePath;
-}
+const routesFile = findRoutesFile(takeFlag("--routes") ?? "generic");
+const routesModulePath = relative(process.cwd(), routesFile);
+const target = takeNumberFlag("--target", 3_000_000);
+const seed = takeNumberFlag("--seed", 0x5a17f00d);
+const outFlag = takeFlag("--out");
+const outPath = outFlag ? resolve(process.cwd(), outFlag) : siblingUrlsFile(routesFile);
 
-const routesModulePath =
-  process.env.BENCH_STATIC_ROUTES_MODULE ?? "./bench/routes-generic.mjs";
-const target = Number(process.env.BENCH_STATIC_URLS_TARGET ?? 3_000_000);
-const seed = Number(process.env.BENCH_STATIC_URLS_SEED ?? 0x5a17f00d);
-
-const routesModuleUrl = resolveModuleUrl(routesModulePath);
-const routesModule = await import(routesModuleUrl);
+const routesModule = await import(pathToFileURL(routesFile).href);
 if (!Array.isArray(routesModule.routes)) {
   throw new Error(
     `Routes module "${routesModulePath}" must export a routes array.`,
   );
 }
 const routes = routesModule.routes;
-
-const resolvedRoutesFilePath =
-  routesModuleUrl.startsWith("file:")
-    ? new URL(routesModuleUrl).pathname
-    : resolve(process.cwd(), routesModulePath);
-const defaultOutPath = resolve(
-  dirname(resolvedRoutesFilePath),
-  `${basename(resolvedRoutesFilePath, ".mjs")}.urls.mjs`,
-);
-const outPath = resolve(
-  process.cwd(),
-  process.env.BENCH_STATIC_URLS_OUT ?? defaultOutPath,
-);
 
 const weightedRoutes = [];
 let totalWeight = 0;

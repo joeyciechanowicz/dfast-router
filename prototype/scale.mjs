@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { takeSwitch } from "../bench/flags.mjs";
 import { compile, buildFast } from "./rc.mjs";
 const R = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const Medley = createRequire(R + "/package.json")("@medley/router");
@@ -31,12 +32,12 @@ function measure(find, urls) {
   const ts = []; for (let k = 0; k < 9; k++) { const a = process.hrtime.bigint(); pass(); ts.push(Number(process.hrtime.bigint() - a) / urls.length); }
   return ts.sort((a, b) => a - b)[4];
 }
+const noMin = takeSwitch("--no-min");
 const kind = process.argv[2], sizes = process.argv.slice(3).map(Number);
 for (const n of sizes) {
   const r = rng(n * 7 + 1), pats = (kind === "rest" ? restApi : overlap)(n, r);
   const urls = Array.from({ length: 200000 }, () => Buffer.from(toUrl(pats[Math.floor(r() * n)], r), "latin1").toString("latin1"));
   const t0 = performance.now();
-  const noMin = process.env.NOMIN === "1";
   const dfa = compile(pats.map((path, i) => ({ path, route: i })), { acceptByPattern: true, minimise: !noMin });
   const t1 = performance.now();
   // how much of the automaton does real traffic ever touch? (the case for building states lazily)

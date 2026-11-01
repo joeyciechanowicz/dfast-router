@@ -432,7 +432,7 @@ npx tsx --test test/reference.test.mjs
 7. Add `--read-params`, which reads `.params` on every hit.
 8. In `compare.mjs`, run each router in its own process and print each router's ratio to medley.
 9. Add a `createRouter` adapter to `prototype/shim-dfa.cjs`, so that the prototype can run in the `balancing-router` slot. G2 compares against it in the same session.
-10. In `package.json`, remove `bench:gate` and `bench:matrix`, whose files no longer exist. Change `test:consistency` to `FULL_CORPUS=1 tsx test/router-consistency.test.mjs`.
+10. In `package.json`, remove `bench:gate` and `bench:matrix`, whose files no longer exist. Change `test:consistency` to `tsx test/router-consistency.test.mjs --full`.
 11. Remove `createAutomatonRouter` and `buildBalancingRouterV2` from the bench.
 
 **Done when:** these all run without errors. Check behaviour only, because speed is judged at G1:
@@ -553,9 +553,9 @@ Write these from the [Behaviour contract](#behaviour-contract), not from any imp
 2. Add tests for what's new: D2, D3, D5, D10, D11, recompiling after `on()`, `%` left undecoded, and the priority rules across all four tiers. For D10, include `/café` against `/cafü`, and `.+` against a path holding `\u2028`.
 3. Mark the D6 named-groups test `{ todo: 'WP-9' }`.
 4. Rewrite `test/router-consistency.test.mjs` as the differential test. Compare route and params against `bench/reference.mjs`, keeping the mutations from `prototype/verify.mjs`.
-   - Run a 50k-URL sample by default, and everything when `FULL_CORPUS=1`.
+   - Run a 50k-URL sample by default, and everything with `--full`.
    - Include `routes-specific` when present, and print a visible skip message when not. This held-out set caught a real semantic bug in the prototype.
-   - Support `DIFF_TARGET=prototype`, which builds the router as `cand.mjs` builds `tail-lazy`.
+   - Support `--prototype`, which builds the router as `cand.mjs` builds `tail-lazy`.
 5. Add `test/fixtures/routes-overlap.mjs`: a route set where URLs match several routes, covering static against param, param scores, wildcards, and same-language routes with different names. Without this, the differential test can't detect a ranking bug. Use the route shape from `bench/reference.mjs`. Keep named groups out of its regex routes, because WP-8 returns empty params for them. WP-9 adds a named-group route.
 6. Add a harness self-test: run the differential against a deliberately broken router, with one wrong param and one swapped priority, and require it to fail.
 
@@ -563,7 +563,7 @@ Write these from the [Behaviour contract](#behaviour-contract), not from any imp
 
 ```bash
 npm run build
-DIFF_TARGET=prototype npm run test:consistency   # bench route sets: 0 mismatches
+npm run test:consistency -- --prototype   # bench route sets: 0 mismatches
 ```
 
 Registration order and required ranking never disagree on the two bench route sets, so the prototype should pass there with no false alarms. It's expected to fail on `routes-overlap`, which is also proof that the fixture works. `test/router.test.ts` stays red until WP-8.
@@ -594,7 +594,7 @@ Registration order and required ranking never disagree on the two bench route se
 
 ```bash
 npm test
-FULL_CORPUS=1 npm run test:consistency
+npm run test:consistency
 ```
 
 All tests pass except the `todo`, and the differential shows 0 mismatches on all three route sets, including `routes-overlap`.
@@ -620,7 +620,7 @@ All tests pass except the `todo`, and the differential shows 0 mismatches on all
 7. If the whole table exceeds `maxStates`, throw an error naming the route that goes over.
 8. Add a way to see how many routes were demoted, because residual routes keep backtracking and ReDoS exposure.
 
-**Done when:** `npm test` and `FULL_CORPUS=1 npm run test:consistency` pass with no `todo` left, and a test shows that a pathological route set fails or demotes rather than hanging.
+**Done when:** `npm test` and `npm run test:consistency` pass with no `todo` left, and a test shows that a pathological route set fails or demotes rather than hanging.
 
 ### WP-10: On-demand states spike
 
@@ -674,7 +674,7 @@ Follow the `AGENTS.md` workflow exactly: profile first, make one change, run `np
 4. Check that nothing imports `prototype/`, then delete it. **Held back until the open items are decided.**
 5. Delete this plan last, once the progress log's final numbers are in `how-it-works.md`. **Held back, as above.**
 
-**Done when:** `npm run build`, `npm test`, and `FULL_CORPUS=1 npm run test:consistency` all pass with `prototype/` gone.
+**Done when:** `npm run build`, `npm test`, and `npm run test:consistency` all pass with `prototype/` gone.
 
 ## Acceptance criteria
 
@@ -715,16 +715,16 @@ The two narrow misses are on a gate set from the prototype in a lighter harness.
 
 ## Prototype
 
-`prototype/` holds the code behind every number here, with paths made relative. Its medley comparisons need a built `dist/`: the git-ignored one in the main checkout until WP-1, then `npm run build`. It's verbatim apart from those paths and a `READ_PARAMS` switch in `run.mjs`, and keeps the rejected approaches so that the comparisons stay reproducible.
+`prototype/` holds the code behind every number here, with paths made relative. Its medley comparisons need a built `dist/`: the git-ignored one in the main checkout until WP-1, then `npm run build`. It's verbatim apart from those paths, a `--read-params` switch in `run.mjs`, and environment variables that became flags, and keeps the rejected approaches so that the comparisons stay reproducible.
 
 | File | Purpose |
 |---|---|
 | `rc.mjs` | Compiler and all engine variants (see the port map above) |
 | `cand.mjs` | Builds each candidate by name |
 | `verify.mjs` | Differential check on route and params |
-| `run.mjs` | One-candidate timing; set `READ_PARAMS=1` to read params |
+| `run.mjs` | One-candidate timing; `--read-params` reads params |
 | `stress.mjs` | Near-miss 404s, query strings, long params |
-| `scale.mjs` | Large route tables; `NOMIN=1` skips minimization and reports state coverage |
+| `scale.mjs` | Large route tables; `--no-min` skips minimization and reports state coverage |
 | `explode.mjs` | Deliberate state explosion |
 | `status.mjs` | V8 tier check; run with `--allow-natives-syntax` |
 | `prims.mjs` | String primitive microbenchmarks |
@@ -742,10 +742,10 @@ node prototype/stress.mjs tail-eager token200
 node prototype/scale.mjs rest 100 300 1000 3000
 ```
 
-To run on the held-out routes, prefix a command with:
+To run on the held-out routes, add this to a command:
 
 ```bash
-BENCH_ROUTES_MODULE="$PWD/bench/routes-specific.mjs" BENCH_PRECOMPUTED_URLS_MODULE="$PWD/bench/routes-specific.urls.mjs"
+--routes specific
 ```
 
 ## Progress log

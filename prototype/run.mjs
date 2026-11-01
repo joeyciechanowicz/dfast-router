@@ -1,6 +1,8 @@
 // One candidate per process: no megamorphic pollution or ordering effects between routers.
+import { takeSwitch } from "../bench/flags.mjs";
 import { build, R } from "./cand.mjs";
 const { routes, precomputedUrls } = await import(R + "/bench/routes.mjs");
+const READ = takeSwitch("--read-params"); // force params so lazy results pay for extraction
 const name = process.argv[2];
 const strMode = process.argv[3] ?? "fresh";
 const rounds = Number(process.argv[4] ?? 7);
@@ -11,7 +13,6 @@ const urls = strMode === "fresh" ? precomputedUrls.slice(0, N).map(fresh)
   : precomputedUrls.slice(0, N);
 const find = build(name, routes, precomputedUrls.slice(0, 300000));
 globalThis.LAST = null;
-const READ = process.env.READ_PARAMS === "1"; // force params so lazy results pay for extraction
 function pass() { let hits = 0; for (let i = 0; i < urls.length; i++) { const m = find(urls[i]); if (m !== null) { hits++; globalThis.LAST = READ ? m.params : m; } } return hits; }
 let hits = 0; for (let r = 0; r < 2; r++) hits = pass();
 const ts = [];

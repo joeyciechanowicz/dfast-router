@@ -1,20 +1,21 @@
 /**
  * Differential test: the router must agree with bench/reference.mjs on route and params.
  *
- * Runs a sample under `npm test`, and everything with FULL_CORPUS=1 (`npm run test:consistency`).
- * DIFF_TARGET=prototype checks prototype/ instead, on the bench route sets only, because the
- * prototype has no methods, wildcards, aliases, or regex routes.
+ * Runs a sample under `npm test`, and everything with --full (`npm run test:consistency`).
+ * --prototype checks prototype/ instead, on the bench route sets only, because the prototype has
+ * no methods, wildcards, aliases, or regex routes.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { createExpress4, createExpress5 } from '../bench/express.mjs';
+import { takeSwitch } from '../bench/flags.mjs';
 import { createReference } from '../bench/reference.mjs';
 import { methods, neverWin, routes as overlapRoutes, urls as overlapUrls } from './fixtures/routes-overlap.mjs';
 import { compare, countOverlaps, mutate } from './helpers/differential.mjs';
 
-const FULL = process.env.FULL_CORPUS === '1';
-const PROTOTYPE = process.env.DIFF_TARGET === 'prototype';
+const FULL = takeSwitch('--full');
+const PROTOTYPE = takeSwitch('--prototype');
 const SAMPLE_URLS = 40_000;
 const SAMPLE_MUTATIONS = 10_000;
 const FULL_MUTATIONS = 400_000;

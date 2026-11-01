@@ -1,6 +1,9 @@
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import { takeNumberFlag } from "../bench/flags.mjs";
 import { compile, profile, buildTable, codegen, instantiate, buildPathTree, codegenHot, instantiateHot, compile2, codegen2, buildFast } from "./rc.mjs";
+const afterFlag = takeNumberFlag("--after");
+const gallopFlag = takeNumberFlag("--gallop", 8);
 export const R = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const require = createRequire(R + "/package.json");
 const Medley = require("@medley/router");
@@ -54,11 +57,11 @@ export function build(name, routes, trainUrls) {
     case "plain-notrain": return buildFast(compile(pats, { acceptByPattern: true }), adapt(routes), { train: [], mode: "lazy" });
     case "tail-lazy": case "tail-eager": {
       const mode = name.split("-")[1];
-      return buildFast(compile(pats, { acceptByPattern: true }), adapt(routes), { train: [], mode, gallop: 8, after: +(process.env.AFTER ?? 8), tail: true });
+      return buildFast(compile(pats, { acceptByPattern: true }), adapt(routes), { train: [], mode, gallop: 8, after: afterFlag ?? 8, tail: true });
     }
     case "gallop-lazy": case "gallop-eager": {
       const mode = name.split("-")[1];
-      return buildFast(compile(pats, { acceptByPattern: true }), adapt(routes), { train: [], mode, gallop: +(process.env.GALLOP ?? 8), after: +(process.env.AFTER ?? 0) });
+      return buildFast(compile(pats, { acceptByPattern: true }), adapt(routes), { train: [], mode, gallop: gallopFlag, after: afterFlag ?? 0 });
     }
     case "fast-class-lazy": case "fast-class-eager": case "fast-class-index":
     case "fast-direct-lazy": case "fast-direct-eager": case "fast-direct-index": {

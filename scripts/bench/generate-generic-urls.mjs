@@ -1,6 +1,7 @@
 import { createWriteStream } from "node:fs";
 import { once } from "node:events";
 import { resolve } from "node:path";
+import { takeNumberFlag } from "../../bench/flags.mjs";
 import { routes } from "../../bench/routes-generic.mjs";
 
 function createRng(initial) {
@@ -20,8 +21,8 @@ function normalizePath(path) {
   return `/${path}`;
 }
 
-const target = Number(process.env.BENCH_STATIC_URLS_TARGET ?? 3_000_000);
-const seed = Number(process.env.BENCH_STATIC_URLS_SEED ?? 0x5a17f00d);
+const target = takeNumberFlag("--target", 3_000_000);
+const seed = takeNumberFlag("--seed", 0x5a17f00d);
 const outPath = resolve(process.cwd(), "bench", "routes-generic.urls.mjs");
 
 const weightedRoutes = [];

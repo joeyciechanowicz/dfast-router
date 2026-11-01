@@ -1,6 +1,7 @@
 const { dist, expand } = require("./shim-common.cjs");
 const { compile, buildFast } = require("./rc.mjs");
-const MODE = process.env.DFA_MODE ?? "eager";
+const { takeFlag } = require("../bench/flags.mjs");
+const MODE = takeFlag("--dfa-mode") ?? "eager";
 function createDfa() {
   const routes = []; let find = null;
   return {
