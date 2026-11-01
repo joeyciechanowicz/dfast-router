@@ -7,9 +7,12 @@ const CHAR_CODES = 0x10000;
 
 /**
  * Whether `s` holds a character above ASCII, which always takes more than one UTF-8 byte. Over 200
- * characters this is 12x faster than a JS loop.
+ * characters `Buffer` is 12x faster than a JS loop and 6x faster than a regex, which is only for
+ * where there is no `Buffer`, such as a browser.
  */
-const hasNonAscii = (s: string): boolean => Buffer.byteLength(s) !== s.length;
+const hasNonAscii: (s: string) => boolean = typeof Buffer === 'undefined'
+  ? (s) => /[^\x00-\x7f]/.test(s)
+  : (s) => Buffer.byteLength(s) !== s.length;
 
 /** Whether the path before `end` holds a character above ASCII, ignoring any query. */
 const pathHasNonAscii = (s: string, end: number): boolean => hasNonAscii(end === s.length ? s : s.slice(0, end));
