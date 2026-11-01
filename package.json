@@ -33,7 +33,7 @@
     "express": "^5.3.0",
     "express-4": "npm:express@^4.22.3",
     "fastify": "^5.7.2",
-    "find-my-way": "^8.2.0",
+    "find-my-way": "^9.10.0",
     "h3": "^1.15.0",
     "hono": "^4.11.7",
     "itty-router": "^5.0.22",

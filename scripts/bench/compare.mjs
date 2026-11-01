@@ -19,6 +19,8 @@ const routerNames = [
   'path-to-regexp-linear',
   'express@4',
   'express@5',
+  'find-my-way',
+  'find-my-way-compiled',
 ];
 
 function run(command, args, options = {}) {

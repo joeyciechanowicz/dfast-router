@@ -2,7 +2,7 @@
 
 A fast HTTP router for routes defined as regexes. It compiles the whole route table into one DFA and runs it from a typed-array table, so a lookup reads each character once, and most regex routes can't backtrack.
 
-On the bench traffic it's about 3× faster than a radix-tree router (`@medley/router`) that does less: it validates param regexes, which that router can't. Against Express's router, which enforces the same routes and matches exactly the same URLs, it's at least 13× faster with params read. See [Performance](#performance).
+On the bench traffic it's about 3× faster than a radix-tree router (`@medley/router`) that does less: it validates param regexes, which that router can't. Against Express's router, which enforces the same routes and matches exactly the same URLs, it's at least 13× faster with params read. `find-my-way`, the router inside Fastify, enforces them too: with params read, this is at least 2× faster than the tree walk Fastify runs, and 1.2× to 1.8× faster than `find-my-way`'s opt-in compiled mode. See [Performance](#performance).
 
 ## Usage
 
@@ -225,6 +225,27 @@ What differs between the numbers:
 - Express 4 takes the route strings as they are. Express 5 dropped that syntax, so each route is registered as one `RegExp`, which is how it validates.
 
 Express's code didn't change between comparison runs, and its numbers still moved by up to 4%, so treat these as approximate.
+
+### Against find-my-way
+
+`find-my-way` is the router inside Fastify. It enforces param regexes, and its `find` returns a match without calling the handler, so it does the same job as `find()` here, and needs no dispatch around it. These are the same 34 routes, measured with `npm run bench:compare -- --read-params`, best of 3, with find-my-way 9.10.
+
+| Traffic | Hit rate | dfast-router | find-my-way compiled | find-my-way tree | vs compiled | vs tree |
+|---|---:|---:|---:|---:|---:|---:|
+| 34 routes, shuffled | 94.95% | 14.1M/s (71ns) | 10.8M/s (92ns) | 6.52M/s (153ns) | 1.3× | 2.2× |
+| Near-miss 404s | 16.92%, find-my-way 20.68% | 18.2M/s (55ns) | 10.2M/s (98ns) | 5.85M/s (171ns) | 1.8× | 3.1× |
+| Query strings | 94.95% | 11.6M/s (86ns) | 10.0M/s (100ns) | 5.38M/s (186ns) | 1.2× | 2.2× |
+
+Both modes matched the reference exactly on the other four corpora. The near-miss row isn't quite like for like: `find-my-way` lets a plain param be empty, so `/items/` matches `/items/:id`, and that accounts for every over-match in the 1M URLs. It under-matched nothing. `npm run test:consistency` compares route and params URL by URL: 0 mismatches on 1.3M lookups of these routes in each mode. It counts an empty param as a miss, and leaves out URLs containing `%`, because `find-my-way` decodes params and this router doesn't.
+
+What differs between the numbers:
+
+- The tree walk is what Fastify runs. `compile()` generates JavaScript from the tree, and Fastify doesn't call it, so the compiled column is the fastest this library gets, not what a Fastify app gets.
+- Neither number includes HTTP parsing, a response, or Fastify's own request handling.
+- `find-my-way` is configured to do this router's job. `maxParamLength` is raised, because the default of 100 turns a longer param into a miss. Its query string parser is replaced with a stub, because `find` parses the query string by default and `find()` here leaves that to the caller.
+- `find-my-way` builds params on every lookup, and this router builds them on first read. That's why these numbers read params, and why this table has no row without them.
+
+`find-my-way`'s code didn't change between comparison runs, and its numbers still moved by up to 5%, so treat these as approximate.
 
 ## Development
 

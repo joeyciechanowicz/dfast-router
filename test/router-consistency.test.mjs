@@ -9,6 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { createExpress4, createExpress5 } from '../bench/express.mjs';
+import { createFindMyWay, createFindMyWayCompiled } from '../bench/find-my-way.mjs';
 import { takeSwitch } from '../bench/flags.mjs';
 import { createReference } from '../bench/reference.mjs';
 import { methods, neverWin, routes as overlapRoutes, urls as overlapUrls } from './fixtures/routes-overlap.mjs';
@@ -120,19 +121,54 @@ async function checkExpress(create, routes, corpus) {
   assert.ok(result.hits > result.checked / 2, 'too few hits to mean anything');
 }
 
-const expressVersions = [['express@4', createExpress4], ['express@5', createExpress5]];
-const expressSkip = PROTOTYPE ? 'this checks Express, not the prototype' : false;
+// find-my-way is held to the same reference. It really does differ on two kinds of URL:
+// - `%`, because it decodes params and this router doesn't. These are counted and left out.
+// - An empty param, which it matches and the reference doesn't: `/items/` is `/items/:id` with `id`
+//   empty. These count as misses, so one that beats a real match still fails as a wrong route.
+async function checkFindMyWay(create, routes, corpus) {
+  const { lookup } = create(routes);
+  let emptyParams = 0;
+  const find = (method, url) => {
+    const match = lookup(method, url[0] === '/' ? url : `/${url}`);
+    if (match === null) return null;
+    const { route, wildcard } = match.store;
+    const params = Object.entries(match.params).map(([name, value]) => [name === '*' ? wildcard : name, value]);
+    if (params.some(([, value]) => value === '')) {
+      emptyParams += 1;
+      return null;
+    }
+    return { route, params: Object.fromEntries(params) };
+  };
 
-for (const [name, create] of expressVersions) {
-  test(`${name} agrees on the generic bench routes`, { skip: expressSkip }, async () => {
+  const lookups = lookupsFor(corpus);
+  const undecoded = lookups.filter(({ url }) => !url.includes('%'));
+  const result = compare(find, routes, undecoded);
+  console.log(
+    `checked ${result.checked}, ${result.hits} hits, ${result.mismatches.length} mismatches, ` +
+      `left out ${lookups.length - undecoded.length} with %, ${emptyParams} matched an empty param`,
+  );
+  assertAgrees(result);
+  assert.ok(result.hits > result.checked / 2, 'too few hits to mean anything');
+}
+
+const frameworks = [
+  ['express@4', createExpress4, checkExpress],
+  ['express@5', createExpress5, checkExpress],
+  ['find-my-way', createFindMyWay, checkFindMyWay],
+  ['find-my-way-compiled', createFindMyWayCompiled, checkFindMyWay],
+];
+const frameworkSkip = PROTOTYPE ? 'this checks the frameworks, not the prototype' : false;
+
+for (const [name, create, check] of frameworks) {
+  test(`${name} agrees on the generic bench routes`, { skip: frameworkSkip }, async () => {
     const { routes, precomputedUrls } = await import('../bench/routes-generic.mjs');
-    await checkExpress(create, routes, precomputedUrls);
+    await check(create, routes, precomputedUrls);
   });
 
-  test(`${name} agrees on the specific bench routes`, { skip: expressSkip || specificSkip }, async () => {
+  test(`${name} agrees on the specific bench routes`, { skip: frameworkSkip || specificSkip }, async () => {
     const { routes } = await import(specificRoutes.href);
     const { precomputedUrls } = await import(specificUrls.href);
-    await checkExpress(create, routes, precomputedUrls);
+    await check(create, routes, precomputedUrls);
   });
 }
 
