@@ -14,7 +14,7 @@ const seed = takeNumberFlag('--seed', Date.now());
 const benchArgs = process.argv.slice(2);
 const baselineRouter = '@medley/router';
 const routerNames = [
-  'balancing-router',
+  'dfast-router',
   baselineRouter,
   'path-to-regexp-linear',
   'express@4',
@@ -130,7 +130,7 @@ if (!previousIndex) {
   process.exit(0);
 }
 
-const tmpDir = mkdtempSync(join(tmpdir(), 'balancing-router-'));
+const tmpDir = mkdtempSync(join(tmpdir(), 'dfast-router-'));
 const previousWorktree = resolve(tmpDir, 'prev-tree');
 let worktreeAdded = false;
 

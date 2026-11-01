@@ -1,4 +1,4 @@
-# balancing-router
+# dfast-router
 
 A fast HTTP router for routes defined as regexes. It compiles the whole route table into one DFA and runs it from a typed-array table, so a lookup reads each character once, and most regex routes can't backtrack.
 
@@ -9,7 +9,7 @@ On the bench traffic it's about 3× faster than a radix-tree router (`@medley/ro
 The router finds a handler and gives it back, and your code calls it. So you choose the handler's type, as long as it takes `params` and `store` first. Anything after those is yours, such as `req` and `res`:
 
 ```ts
-import { createRouter, type Params } from "balancing-router";
+import { createRouter, type Params } from "dfast-router";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 
 interface RouteMeta {
@@ -45,7 +45,7 @@ server.listen(3000);
 Without a server there's no `req` or `res`, so the same router works in a browser. Register on `"*"` if methods mean nothing there:
 
 ```ts
-import { createRouter, type Params } from "balancing-router";
+import { createRouter, type Params } from "dfast-router";
 
 interface PageMeta {
   title: string;
@@ -193,7 +193,7 @@ flowchart TD
 
 Measured with `bench/bench.mjs` on an Apple M1 Pro with Node 22, best of 3 seeds. The URLs are fresh strings, as a real `req.url` would be, and `@medley/router` is given routes it can match. Lookups slow down as the table grows and stops fitting in cache: 95ns at 100 routes, and 166ns at 3,000.
 
-| Traffic | Params | balancing-router | @medley/router | Ratio |
+| Traffic | Params | dfast-router | @medley/router | Ratio |
 |---|---|---:|---:|---:|
 | 34 routes, shuffled | not read | 20.5M/s (49ns) | 6.9M/s (144ns) | 2.96× |
 | 34 routes, shuffled | read | 14.2M/s (71ns) | 6.8M/s (148ns) | 2.10× |
@@ -209,7 +209,7 @@ Compiling 3,000 REST routes takes about 0.1s. These numbers come from a machine 
 
 Express's router can enforce the same routes, so this is the like-for-like comparison: the same 34 routes, with param regexes enforced by the matcher, and `strict` and `caseSensitive` on to match this router's rules. Measured with `npm run bench:compare -- --read-params`, best of 3, with Express 5.3 and 4.22.
 
-| Traffic | Hit rate | balancing-router | Express 5 | Express 4 | vs Express 5 | vs Express 4 |
+| Traffic | Hit rate | dfast-router | Express 5 | Express 4 | vs Express 5 | vs Express 4 |
 |---|---:|---:|---:|---:|---:|---:|
 | 34 routes, shuffled | 94.95% | 14.3M/s (70ns) | 1.11M/s (903ns) | 1.01M/s (993ns) | 13× | 14× |
 | Near-miss 404s | 16.92% | 18.8M/s (53ns) | 890K/s (1,124ns) | 714K/s (1,401ns) | 21× | 26× |

@@ -1,4 +1,4 @@
-// Plugs a router into the repo's own bench.mjs via --router, under the "balancing-router" slot.
+// Plugs a router into the repo's own bench.mjs via --router, under the "dfast-router" slot.
 const R = require("node:path").resolve(__dirname, "..");
 const dist = require(R + "/dist/index.js");
 function expand(pattern) { // same semantics as expandPathPattern in bench/routes-generic.mjs

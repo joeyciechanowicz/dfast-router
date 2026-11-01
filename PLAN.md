@@ -425,13 +425,13 @@ npx tsx --test test/reference.test.mjs
 
 1. Point `validateRouteDefinitions` (`bench/bench.mjs:110`) at `bench/reference.mjs`.
 2. Register medley with `frameworkRouteFixtures` in `buildMedleyRouter` and `buildMedleyRouterLocal` (`bench/bench.mjs:207`, `:228`).
-3. Add `["balancing-router", buildBalancingRouter]` to `routerBuilders` (`:312`), and remove its `warmup`. If `createRouter` throws, the existing `logBuildError` path should skip the router.
+3. Add `["dfast-router", buildDfastRouter]` to `routerBuilders` (`:312`), and remove its `warmup`. If `createRouter` throws, the existing `logBuildError` path should skip the router.
 4. Add `hitRate` to results from a 100k-URL sample. Fail the run if a router is more than 0.1 points below the reference. Report over-matching without failing, because medley can't validate param regexes.
 5. Replay fresh, flat, non-internalized strings by default: `Buffer.from(u, 'latin1').toString('latin1')`.
 6. Add `--corpus near404|query|uuid36|token200`, porting the generators from `prototype/stress.mjs` to `bench/corpus.mjs`.
 7. Add `--read-params`, which reads `.params` on every hit.
 8. In `compare.mjs`, run each router in its own process and print each router's ratio to medley.
-9. Add a `createRouter` adapter to `prototype/shim-dfa.cjs`, so that the prototype can run in the `balancing-router` slot. G2 compares against it in the same session.
+9. Add a `createRouter` adapter to `prototype/shim-dfa.cjs`, so that the prototype can run in the `dfast-router` slot. G2 compares against it in the same session.
 10. In `package.json`, remove `bench:gate` and `bench:matrix`, whose files no longer exist. Change `test:consistency` to `tsx test/router-consistency.test.mjs --full`.
 11. Remove `createAutomatonRouter` and `buildBalancingRouterV2` from the bench.
 
@@ -441,7 +441,7 @@ npx tsx --test test/reference.test.mjs
 npm run build
 node bench/bench.mjs --json --time 200 --only medley-router-local
 node bench/bench.mjs --json --time 200 --only medley-router-local --read-params --corpus near404
-node bench/bench.mjs --json --time 200 --only balancing-router --router "$PWD/prototype/shim-dfa.cjs"
+node bench/bench.mjs --json --time 200 --only dfast-router --router "$PWD/prototype/shim-dfa.cjs"
 ```
 
 `hitRate` must be about 95% for both routers on the clean corpus.
@@ -603,7 +603,7 @@ All tests pass except the `todo`, and the differential shows 0 mismatches on all
 
 **Machine idle.** Stop here if this fails: every later package builds on it.
 
-- [ ] `balancing-router` is within 5% of the prototype, measured in the same session.
+- [ ] `dfast-router` is within 5% of the prototype, measured in the same session.
 - [ ] At least 1.9× medley with `--read-params`, and at least 2.5× without, on both route sets. These sit below the prototype's 2.0× and 2.9× because methods add real work.
 - [ ] `find` reaches TurboFan (see `prototype/status.mjs`).
 

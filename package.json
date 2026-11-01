@@ -1,5 +1,5 @@
 {
-  "name": "balancing-router",
+  "name": "dfast-router",
   "version": "1.0.0",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -15,15 +15,15 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/joeyciechanowicz/balancing-router.git"
+    "url": "git+https://github.com/joeyciechanowicz/dfast-router.git"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/joeyciechanowicz/balancing-router/issues"
+    "url": "https://github.com/joeyciechanowicz/dfast-router/issues"
   },
-  "homepage": "https://github.com/joeyciechanowicz/balancing-router#readme",
+  "homepage": "https://github.com/joeyciechanowicz/dfast-router#readme",
   "description": "HTTP router that compiles regex routes into one DFA.",
   "devDependencies": {
     "@koa/router": "^15.3.0",

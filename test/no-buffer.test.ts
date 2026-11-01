@@ -8,7 +8,7 @@ import { join, resolve } from 'node:path';
 // Runs the compiled JS in plain node, because tsx itself needs `Buffer` to load a file. `matcher.ts`
 // picks its check when it loads, so `Buffer` has to be gone by then.
 test('non-ASCII checks work without Buffer, as in a browser', () => {
-  const outDir = mkdtempSync(join(tmpdir(), 'balancing-router-'));
+  const outDir = mkdtempSync(join(tmpdir(), 'dfast-router-'));
   execFileSync(process.execPath, [resolve('node_modules/typescript/bin/tsc'), '-p', 'tsconfig.json', '--outDir', outDir]);
 
   const script = `

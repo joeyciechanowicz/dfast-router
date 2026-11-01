@@ -220,7 +220,7 @@ const replayCorpus = withInjectedNotFound(
 });
 
 // Every lookup returns its match, or null, so that `--read-params` can reach `.params`.
-function buildBalancingRouter() {
+function buildDfastRouter() {
   const router = createRouter();
   for (const [method, path, handler] of routeFixtures) {
     router.on(method, path, handler);
@@ -413,7 +413,7 @@ async function runBenchmarks() {
   const results = [];
 
   const routerBuilders = [
-    ["balancing-router", () => buildBalancingRouter()],
+    ["dfast-router", () => buildDfastRouter()],
     ["@medley/router", () => buildMedleyRouter()],
     ["path-to-regexp-linear", () => buildPathToRegexpLinear()],
     ["express@4", () => createExpress4(routeDefinitions)],

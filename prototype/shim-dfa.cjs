@@ -15,7 +15,7 @@ function createDfa() {
     },
   };
 }
-// The "balancing-router" slot. Results keep the prototype's { store, params } shape, not RouteMatch:
+// The "dfast-router" slot. Results keep the prototype's { store, params } shape, not RouteMatch:
 // wrapping them would add an allocation per hit, and the bench reads only null and `.params`.
 function createRouter() {
   const dfa = createDfa(); const stores = new Map();

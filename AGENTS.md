@@ -46,6 +46,6 @@ Scripts in this repo take flags, not environment variables. `bench/flags.mjs` re
 
 ## Definition of Done for Perf Changes
 
-- Bench compare shows improvement for balancing-router.
+- Bench compare shows improvement for dfast-router.
 - No functional regressions: `npm test` and `npm run test:consistency` both pass.
 - Change committed with a clear message.
