@@ -1,7 +1,7 @@
 import { Match } from './match';
 import { NON_ASCII } from './compiler/types';
 import type { Miss, Results, Table } from './compiler/types';
-import type { RouteMatch } from './types';
+import type { RouteHandler, RouteMatch } from './types';
 
 const CHAR_CODES = 0x10000;
 
@@ -19,9 +19,9 @@ const pathHasNonAscii = (s: string, end: number): boolean => hasNonAscii(end ===
  * there comes from a measurement. Character codes are literals because an import from a CommonJS
  * module is a property load, and `find` is the one place that could notice it.
  */
-export function createMatcher(
-  table: Table, results: Results, miss: Miss,
-): (path: string, method: number) => RouteMatch | null {
+export function createMatcher<THandler extends RouteHandler<any>>(
+  table: Table, results: Results<THandler>, miss: Miss<THandler>,
+): (path: string, method: number) => RouteMatch<THandler> | null {
   const TT = table.tt;
   // By char code, so that V8 can prove every read in bounds and `find` needs no check for non-ASCII.
   const CLS = new Uint8Array(CHAR_CODES).fill(table.cls[NON_ASCII]);
@@ -42,7 +42,7 @@ export function createMatcher(
   const INEXACT = results.inexact;
 
   /** `miss`, given a row as an offset into RESULT. */
-  const missAt = (s: string, m: number, i: number, row: number): RouteMatch | null =>
+  const missAt = (s: string, m: number, i: number, row: number): RouteMatch<THandler> | null =>
     miss(s, m, i, row === NO_ROW ? -1 : row >> METHOD_BITS);
 
   /**
@@ -70,7 +70,7 @@ export function createMatcher(
    * `?` is searched for at most once: narrowing n to the end of the path means that a path of many
    * long segments doesn't rescan to its end at each one.
    */
-  function slow(s: string, i: number, n: number, x: number, m: number): RouteMatch | null {
+  function slow(s: string, i: number, n: number, x: number, m: number): RouteMatch<THandler> | null {
     let st = 0;
     let flagged = false;
     let skipped = -1; // where `indexOf` first took over; n is the path's end once this is set
@@ -122,7 +122,7 @@ export function createMatcher(
     return prebuilt !== null ? prebuilt : new Match(target, s, i, null);
   }
 
-  return function find(s: string, m: number): RouteMatch | null {
+  return function find(s: string, m: number): RouteMatch<THandler> | null {
     const n = s.length;
     let st = START;
     let i = 0;

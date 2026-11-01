@@ -7,7 +7,7 @@ import { buildTable } from './compiler/table';
 import type { Ast, DfaInput, Extractor, Miss, Parsed, Results, Variant } from './compiler/types';
 import { Match, MatchTarget } from './match';
 import { createMatcher } from './matcher';
-import type { RouteHandler, RouteMatch } from './types';
+import type { RouteHandler, RouteMatch, RouteMethod, StoreOf } from './types';
 
 /** About 450 routes of heavy param and literal overlap. A REST API of 3000 routes needs 14,000. */
 const DEFAULT_MAX_STATES = 262_144;
@@ -25,17 +25,17 @@ const ANY_METHOD = '*';
 /** Stands in for a param regex the DFA can't hold. It over-accepts, so such a route is confirmed. */
 const ANY_TEXT: Ast = { t: 'rep', x: { t: 'set', set: mkset(() => true) }, min: 0, max: Infinity };
 
-interface Target {
-  handler: RouteHandler;
-  store: unknown;
+interface Target<THandler extends RouteHandler<any>> {
+  handler: THandler;
+  store: StoreOf<THandler>;
 }
 
-interface PatternEntry extends Target {
+interface PatternEntry<THandler extends RouteHandler<any>> extends Target<THandler> {
   variant: Variant;
   path: string;
 }
 
-interface RegexEntry extends Target {
+interface RegexEntry<THandler extends RouteHandler<any>> extends Target<THandler> {
   regex: RegExp;
 }
 
@@ -48,8 +48,8 @@ interface RegexCandidate {
 }
 
 /** What a compiled table needs from `find`. */
-interface Compiled {
-  match: (path: string, method: number) => RouteMatch | null;
+interface Compiled<THandler extends RouteHandler<any>> {
+  match: (path: string, method: number) => RouteMatch<THandler> | null;
   methodIds: Map<string, number>;
   get: number;
   residual: string[];
@@ -76,17 +76,31 @@ export interface RouterOptions {
   maxStates?: number;
 }
 
-export class Router {
+/** Optional only if the store's type allows `undefined`, so a handler always gets the store it declares. */
+type StoreArg<TStore> = undefined extends TStore ? [store?: TStore] : [store: TStore];
+
+export class Router<THandler extends RouteHandler<any> = RouteHandler> {
   private readonly maxStates: number;
-  private readonly patterns = new Map<string, Map<string, PatternEntry>>();
-  private readonly regexes = new Map<string, Map<string, RegexEntry>>();
-  private compiled: Compiled | null = null;
+  private readonly patterns = new Map<string, Map<string, PatternEntry<THandler>>>();
+  private readonly regexes = new Map<string, Map<string, RegexEntry<THandler>>>();
+  private compiled: Compiled<THandler> | null = null;
 
   constructor(options: RouterOptions = {}) {
     this.maxStates = options.maxStates ?? DEFAULT_MAX_STATES;
   }
 
-  on(method: string | string[], path: string | RegExp, handler: RouteHandler, store?: unknown): this {
+  on(
+    method: RouteMethod | readonly RouteMethod[],
+    path: string | RegExp,
+    handler: THandler,
+    ...store: StoreArg<StoreOf<THandler>>
+  ): this;
+  on(
+    method: RouteMethod | readonly RouteMethod[],
+    path: string | RegExp,
+    handler: THandler,
+    store: StoreOf<THandler>,
+  ): this {
     const methods = [method].flat().map(normalizeMethod);
     if (path instanceof RegExp) {
       const regex = statelessCopy(path);
@@ -101,7 +115,7 @@ export class Router {
     return this;
   }
 
-  find(method: string, path: string): RouteMatch | null {
+  find(method: string, path: string): RouteMatch<THandler> | null {
     const compiled = this.compiled ?? this.build();
     const id = method === 'GET' ? compiled.get : compiled.methodIds.get(method) ?? this.methodId(compiled, method);
     return compiled.match(path, id);
@@ -117,19 +131,21 @@ export class Router {
     return (this.compiled ?? this.build()).residual;
   }
 
-  private build(): Compiled {
+  private build(): Compiled<THandler> {
     const compiled = compileRoutes(this.patterns, this.regexes, this.maxStates);
     this.compiled = compiled;
     return compiled;
   }
 
-  private methodId(compiled: Compiled, method: string): number {
+  private methodId(compiled: Compiled<THandler>, method: string): number {
     return compiled.methodIds.get(normalizeMethod(method)) ?? 0;
   }
 }
 
-export function createRouter(options?: RouterOptions): Router {
-  return new Router(options);
+export function createRouter<THandler extends RouteHandler<any> = RouteHandler>(
+  options?: RouterOptions,
+): Router<THandler> {
+  return new Router<THandler>(options);
 }
 
 const fitsAlone = (ast: Ast): boolean => buildDfa([{ ast, tag: 0 }], { maxStates: ROUTE_STATE_LIMIT }).ok;
@@ -178,11 +194,11 @@ function firstOverBudget(inputs: DfaInput[], maxStates: number): number {
   return low - 1;
 }
 
-function compileRoutes(
-  patterns: Map<string, Map<string, PatternEntry>>,
-  regexes: Map<string, Map<string, RegexEntry>>,
+function compileRoutes<THandler extends RouteHandler<any>>(
+  patterns: Map<string, Map<string, PatternEntry<THandler>>>,
+  regexes: Map<string, Map<string, RegexEntry<THandler>>>,
   maxStates: number,
-): Compiled {
+): Compiled<THandler> {
   // Method 0 is `*`, and also any method no route names.
   const methodIds = new Map<string, number>([[ANY_METHOD, 0]]);
   for (const method of [...patterns.keys(), ...regexes.keys()]) {
@@ -266,14 +282,14 @@ function compileRoutes(
   const { dfa } = built;
 
   // Results, one per registered (route, method).
-  const results: Results = {
+  const results: Results<THandler> = {
     rows: new Int32Array(0),
     methodBits,
     targets: [],
     inexact: new Uint8Array(0),
   };
   const resultInexact: number[] = [];
-  const addResult = ({ handler, store }: Target, extractor: Extractor | null, tag: number): number => {
+  const addResult = ({ handler, store }: Target<THandler>, extractor: Extractor | null, tag: number): number => {
     resultInexact.push(tag >= 0 && inexact[tag] ? 1 : 0);
     return results.targets.push(new MatchTarget(handler, store, extractor)) - 1;
   };
@@ -350,12 +366,12 @@ function compileRoutes(
     });
   });
 
-  const resultAt = (r: number, path: string, end: number): RouteMatch => {
+  const resultAt = (r: number, path: string, end: number): RouteMatch<THandler> => {
     const target = results.targets[r];
     return target.prebuilt ?? new Match(target, path, end, null);
   };
 
-  const miss: Miss = (path, method, end, row) => {
+  const miss: Miss<THandler> = (path, method, end, row) => {
     const code = path.length === 0 ? 0 : path.charCodeAt(0);
     if (code !== 47) return match(`/${path}`, method);
     if (row < 0 && !anyResidual) return null;

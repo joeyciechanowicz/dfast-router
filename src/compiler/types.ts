@@ -1,5 +1,5 @@
 import type { MatchTarget } from '../match';
-import type { RouteMatch } from '../types';
+import type { RouteHandler, RouteMatch } from '../types';
 
 export const ALPHABET = 129;  // ASCII, plus one symbol for every code unit above 127
 export const NON_ASCII = 128;
@@ -73,10 +73,10 @@ export interface Table {
 
 export type Extractor = (path: string, end: number) => Record<string, string>;
 
-export interface Results {
+export interface Results<THandler extends RouteHandler<any> = RouteHandler> {
   rows: Int32Array;                 // [(row << methodBits) + method] = result index, or -1
   methodBits: number;
-  targets: MatchTarget[];           // by result index
+  targets: MatchTarget<THandler>[]; // by result index
   inexact: Uint8Array;              // 1 = a non-ASCII path must be confirmed in `miss`
 }
 
@@ -85,4 +85,6 @@ export interface Results {
  * inexact. `row` is the final state's accept row, or -1 if it has none. `end` is the
  * path's end, or -1 if the DFA stopped before reaching it: `miss` finds it only if needed.
  */
-export type Miss = (path: string, method: number, end: number, row: number) => RouteMatch | null;
+export type Miss<THandler extends RouteHandler<any> = RouteHandler> = (
+  path: string, method: number, end: number, row: number,
+) => RouteMatch<THandler> | null;
