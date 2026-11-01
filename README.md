@@ -6,21 +6,28 @@ On the bench traffic it's about 3× faster than a radix-tree router (`@medley/ro
 
 ## Usage
 
-```js
-import { createRouter } from "balancing-router";
-import http from "node:http";
+The router finds a handler and gives it back, and your code calls it. So you choose the handler's type, as long as it takes `params` and `store` first. Anything after those is yours, such as `req` and `res`:
 
-const router = createRouter();
+```ts
+import { createRouter, type Params } from "balancing-router";
+import http, { type IncomingMessage, type ServerResponse } from "node:http";
 
-router.on("GET", "/users/:id", (req, res, params) => {
+interface RouteMeta {
+  auth: boolean;
+}
+type Handler = (params: Params, store: RouteMeta, req: IncomingMessage, res: ServerResponse) => void;
+
+const router = createRouter<Handler>();
+
+router.on("GET", "/users/:id", (params, store, req, res) => {
   res.writeHead(200, { "content-type": "application/json" });
-  res.end(JSON.stringify({ id: params.id }));
-});
+  res.end(JSON.stringify({ id: params.id, auth: store.auth }));
+}, { auth: true });
 
-router.on(["GET", "POST"], /^\/api\/v\d+\/health$/, (req, res) => {
+router.on(["GET", "POST"], /^\/api\/v\d+\/health$/, (params, store, req, res) => {
   res.writeHead(204);
   res.end();
-});
+}, { auth: false });
 
 const server = http.createServer((req, res) => {
   const match = router.find(req.method ?? "GET", req.url ?? "/");
@@ -29,15 +36,35 @@ const server = http.createServer((req, res) => {
     res.end("not found");
     return;
   }
-  match.handler(req, res, match.params);
+  match.handler(match.params, match.store, req, res);
 });
 
 server.listen(3000);
 ```
 
+Without a server there's no `req` or `res`, so the same router works in a browser. Register on `"*"` if methods mean nothing there:
+
+```ts
+import { createRouter, type Params } from "balancing-router";
+
+interface PageMeta {
+  title: string;
+}
+type Handler = (params: Params, store: PageMeta) => string;
+
+const router = createRouter<Handler>();
+
+router.on("*", "/docs/:page", (params, store) => `${store.title}: ${params.page}`, { title: "Docs" });
+
+const match = router.find("GET", location.pathname);
+document.title = match ? match.handler(match.params, match.store) : "Not found";
+```
+
 ## API
 
-### `createRouter(options?): Router`
+### `createRouter<THandler>(options?): Router<THandler>`
+
+`THandler` is the type of your handlers, and it must take `(params, store, ...rest)`. The store's type comes from its second param. To type only the store, use `createRouter<RouteHandler<PageMeta>>()`. Without a type argument, handlers and stores are unchecked.
 
 `options.maxStates` caps the size of the compiled DFA. The default is 262,144 states. Compiling fails past it, and the error names the route that went over.
 
@@ -45,17 +72,18 @@ server.listen(3000);
 
 Registers a route, and returns the router.
 
-- `method`: a string or an array of strings. `"*"` matches any method. Case and surrounding spaces are ignored.
+- `method`: an HTTP method, `"*"` for any method, or an array of those. In TypeScript it must be an uppercase standard method, so a custom one needs `as RouteMethod`. JavaScript callers can pass any string: case and surrounding spaces are ignored.
 - `path`: a route pattern or a `RegExp`.
-- `handler`: `(req, res, params) => any`.
-- `store`: optional data, returned with the match.
+- `handler`: a `THandler`, returned with the match.
+- `store`: data of the handler's store type, returned with the match. It's required unless that type allows `undefined`.
 
 Registering a pattern again for the same method replaces it and keeps its original position. That applies per variant: `/a` replaces the shorter form of an earlier `/a/:x?`.
 
-### `router.find(method, path): RouteMatch | null`
+### `router.find(method, path): RouteMatch<THandler> | null`
 
 Returns `{ handler, params, store }`, or `null`.
 
+- `method` is any string, since it usually comes from the request. A method no route names reaches only `"*"` routes.
 - `params` is built on first read. A route with no params returns a shared result with frozen `params`, so don't mutate it.
 - All three are getters, so read them by name: `{ ...match }` and `Object.keys(match)` won't include them.
 - `path` may include a query string, which is ignored.
