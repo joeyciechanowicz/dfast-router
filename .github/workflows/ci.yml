@@ -21,6 +21,15 @@ jobs:
       - run: npm run build
       - run: npm test
       - run: npm run test:consistency
+      # Before the check below, so that a red run has its summary too.
+      - name: Add bench results to the summary
+        run: |
+          {
+            echo '## `npm run bench`'
+            echo '```'
+            npm run --silent bench
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
       # Params are read because dfast-router builds them lazily and its rivals don't, so leaving them
       # unread flatters it. Every corpus runs even after a loss, so a red run shows all of them.
       - name: Fail if another router beats dfast-router

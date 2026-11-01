@@ -447,7 +447,8 @@ async function runBenchmarks() {
         yield benchLookup;
       });
     }
-    await run({ format: "mitata" });
+    // mitata colors by default, which would put escape codes in a pipe or a file.
+    await run({ format: "mitata", colors: process.stdout.isTTY === true });
     return null;
   }
 
