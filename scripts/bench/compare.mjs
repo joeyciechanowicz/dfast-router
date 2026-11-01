@@ -2,7 +2,8 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { takeNumberFlag } from '../../bench/flags.mjs';
+import { takeNumberFlag, takeSwitch } from '../../bench/flags.mjs';
+import { findFastestFailures } from './fastest.mjs';
 
 const root = process.cwd();
 const tscPath = resolve(root, 'node_modules', 'typescript', 'bin', 'tsc');
@@ -10,6 +11,8 @@ const typeRoots = resolve(root, 'node_modules', '@types');
 const compareTime = takeNumberFlag('--time', 5000);
 const compareRuns = takeNumberFlag('--runs', 3);
 const seed = takeNumberFlag('--seed', Date.now());
+// Skips the previous commit, and exits 1 unless dfast-router beat every other router.
+const requireFastest = takeSwitch('--fastest');
 // Anything else on the command line goes to bench.mjs: `npm run bench:compare -- --corpus near404`.
 const benchArgs = process.argv.slice(2);
 const baselineRouter = '@medley/router';
@@ -123,6 +126,16 @@ function printResults(current, previous) {
       `- ${name}: ${Math.round(entry.hz)} ops/sec (${vsPrevious}), ${formatRatio(entry, baseline)}, hit rate ${entry.hitRate.toFixed(2)}%`,
     );
   }
+}
+
+if (requireFastest) {
+  const outDir = mkdtempSync(join(tmpdir(), 'dfast-router-'));
+  const current = bestOfRuns(buildRouter(root, outDir));
+  console.log(`Fastest check (best of ${compareRuns}, ${compareTime}ms each) ${benchArgs.join(' ')}:`);
+  printResults(current);
+  const failures = findFastestFailures(current.results, routerNames, 'dfast-router');
+  for (const failure of failures) console.error(`[bench] ${failure}`);
+  process.exit(failures.length > 0 ? 1 : 0);
 }
 
 const previousIndex = getPreviousIndex();

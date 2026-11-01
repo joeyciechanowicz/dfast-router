@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - run: npm run test:consistency
+      # Params are read because dfast-router builds them lazily and its rivals don't, so leaving them
+      # unread flatters it. Every corpus runs even after a loss, so a red run shows all of them.
+      - name: Fail if another router beats dfast-router
+        run: |
+          status=0
+          for corpus in clean near404 query uuid36 token200; do
+            npm run bench:compare -- --fastest --read-params --corpus "$corpus" --time 1000 --runs 3 || status=1
+          done
+          exit "$status"

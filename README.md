@@ -258,4 +258,4 @@ What differs between the numbers:
 
 `--routes` takes a name, so `--routes generic` (the default) loads `bench/routes-generic.mjs`, or a path to a routes module. The URLs come from the `.urls.mjs` file next to that module, or are generated from its routes if there isn't one. `--urls <path>` overrides them.
 
-`npm run bench:compare` takes `--time <ms>`, `--runs <n>`, and `--seed <n>`, and passes everything else to `bench.mjs`: `npm run bench:compare -- --routes generic --corpus near404`.
+`npm run bench:compare` takes `--time <ms>`, `--runs <n>`, and `--seed <n>`, and passes everything else to `bench.mjs`: `npm run bench:compare -- --routes generic --corpus near404`. With `--fastest` it skips the previous commit and exits 1 if any router beats this one, or has no result. CI runs that on all five corpora, with params read, on each push to `main`.
