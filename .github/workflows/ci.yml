@@ -25,9 +25,9 @@ jobs:
       - name: Add bench results to the summary
         run: |
           {
-            echo '## `npm run bench`'
+            echo '## `npm run bench -- --read-params`'
             echo '```'
-            npm run --silent bench
+            npm run --silent bench -- --read-params
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
       # Params are read because dfast-router builds them lazily and its rivals don't, so leaving them
