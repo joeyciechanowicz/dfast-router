@@ -5,6 +5,7 @@ import { dirname, resolve } from "node:path";
 import { buildCorpus, injectNotFound } from "./corpus.mjs";
 import { createExpress4, createExpress5 } from "./express.mjs";
 import { createFindMyWay, createFindMyWayCompiled } from "./find-my-way.mjs";
+import { createHonoPattern, createHonoTrie } from "./hono-routers.mjs";
 import { createReference } from "./reference.mjs";
 import { routes, precomputedUrls, routesSource, urlsSource } from "./routes.mjs";
 
@@ -421,6 +422,8 @@ async function runBenchmarks() {
     ["express@5", () => createExpress5(routeDefinitions)],
     ["find-my-way", () => createFindMyWay(routeDefinitions)],
     ["find-my-way-compiled", () => createFindMyWayCompiled(routeDefinitions)],
+    ["hono-trie", () => createHonoTrie(routeDefinitions)],
+    ["hono-pattern", () => createHonoPattern(routeDefinitions)],
   ];
 
   const routers = [];
