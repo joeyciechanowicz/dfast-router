@@ -24,6 +24,7 @@ const routerNames = [
   'express@5',
   'find-my-way',
   'find-my-way-compiled',
+  'hono-smart',
   'hono-trie',
   'hono-pattern',
 ];

@@ -13,7 +13,7 @@ import { RegExpRouter } from 'hono/router/reg-exp-router';
 import { createExpress4, createExpress5 } from '../bench/express.mjs';
 import { createFindMyWay, createFindMyWayCompiled } from '../bench/find-my-way.mjs';
 import { takeSwitch } from '../bench/flags.mjs';
-import { createHonoPattern, createHonoTrie, toHonoPath } from '../bench/hono-routers.mjs';
+import { createHonoPattern, createHonoSmart, createHonoTrie, toHonoPath } from '../bench/hono-routers.mjs';
 import { createReference } from '../bench/reference.mjs';
 import { methods, neverWin, routes as overlapRoutes, urls as overlapUrls } from './fixtures/routes-overlap.mjs';
 import { compare, countOverlaps, mutate } from './helpers/differential.mjs';
@@ -194,6 +194,7 @@ const frameworks = [
   ['express@5', createExpress5, checkExpress],
   ['find-my-way', createFindMyWay, checkFindMyWay],
   ['find-my-way-compiled', createFindMyWayCompiled, checkFindMyWay],
+  ['hono-smart', createHonoSmart, checkHono],
   ['hono-trie', createHonoTrie, checkHono],
   ['hono-pattern', createHonoPattern, checkHonoPattern],
 ];
@@ -212,7 +213,7 @@ for (const [name, create, check] of frameworks) {
   });
 }
 
-// bench/hono-routers.mjs leaves RegExpRouter out for this reason. If this fails, it can go in.
+// bench/hono-routers.mjs has no RegExpRouter entry for this reason. If this fails, it can have one.
 test('Hono RegExpRouter refuses the generic bench routes', { skip: frameworkSkip }, async () => {
   const { routes } = await import('../bench/routes-generic.mjs');
   const router = new RegExpRouter();
@@ -220,6 +221,35 @@ test('Hono RegExpRouter refuses the generic bench routes', { skip: frameworkSkip
     router.add('GET', toHonoPath(path), path);
   }
   assert.throws(() => router.match('GET', '/'), UnsupportedPathError);
+});
+
+test('hono-smart runs TrieRouter on the generic bench routes', { skip: frameworkSkip }, async () => {
+  const { routes } = await import('../bench/routes-generic.mjs');
+  assert.equal(createHonoSmart(routes).activeRouter, 'TrieRouter');
+});
+
+test('hono-smart runs TrieRouter on the specific bench routes', { skip: frameworkSkip || specificSkip }, async () => {
+  const { routes } = await import(specificRoutes.href);
+  assert.equal(createHonoSmart(routes).activeRouter, 'TrieRouter');
+});
+
+// No bench route set reaches RegExpRouter, so this is what covers its params, which it returns as
+// indexes into the regex match rather than as values.
+test('hono-smart reads params when it runs RegExpRouter', { skip: frameworkSkip }, () => {
+  const routes = ['/user', '/user/lookup/:name', '/event/:id/comments/:comment', '/map/:place/events'].map(
+    (path) => ({ path, concretePaths: [path] }),
+  );
+  const { lookup, activeRouter } = createHonoSmart(routes);
+  assert.equal(activeRouter, 'RegExpRouter');
+
+  const urls = ['/user', '/user/lookup/ada', '/event/7/comments/9', '/map/leeds/events?a=1', '/nope', '/user/'];
+  const find = (method, url) => {
+    const match = lookup(method, url);
+    return match === null ? null : { route: match.route, params: match.params };
+  };
+  const { mismatches, hits } = compare(find, routes, urls.map((url) => ({ method: 'GET', url })));
+  assert.deepEqual(mismatches, []);
+  assert.equal(hits, 4);
 });
 
 test('overlapping route set', { skip: PROTOTYPE ? 'the prototype uses registration order' : false }, async () => {
