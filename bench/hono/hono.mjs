@@ -9,8 +9,19 @@ const createHonoRouter = (name, router) => {
   }
   return {
     name: `Hono ${name}`,
+    // Hono's `*` captures nothing: a handler reads the path instead. check.mjs reads this.
+    capturesWildcard: false,
     match: (route) => {
       router.match(route.method, route.path);
+    },
+    // match() returns [[handler, params]...] and, for RegExpRouter, a stash that params index.
+    inspect: (route) => {
+      const [matched, stash] = router.match(route.method, route.path);
+      if (matched.length === 0) return null;
+      const [found, indexes] = matched[0];
+      const params = {};
+      for (const [key, index] of Object.entries(indexes)) params[key] = stash ? stash[index] : index;
+      return { handler: found, params };
     },
   };
 };

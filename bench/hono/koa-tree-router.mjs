@@ -13,4 +13,9 @@ export const koaTreeRouter = {
   match: (route) => {
     router.find(route.method, route.path);
   },
+  inspect: (route) => {
+    const { handle, params } = router.find(route.method, route.path);
+    if (!handle) return null;
+    return { handler: handle[0], params: Object.fromEntries(params.map((p) => [p.key, p.value])) };
+  },
 };

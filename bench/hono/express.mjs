@@ -19,4 +19,14 @@ export const expressRouter = {
   match: (route) => {
     router.handle({ method: route.method, url: route.path }, {}, () => {});
   },
+  // Express runs the handler, not returns it. Its routing is synchronous, so a miss has called
+  // `done` by the time handle() returns.
+  inspect: (route) => {
+    const req = { method: route.method, url: route.path };
+    let missed = false;
+    router.handle(req, {}, () => {
+      missed = true;
+    });
+    return missed ? null : { handler, params: req.params };
+  },
 };

@@ -13,4 +13,10 @@ export const radix3Router = {
   match: (route) => {
     router.lookup(route.path);
   },
+  // radix3 spreads the data it was given into its result, and a function spreads to nothing, so
+  // there's no handler to check. It also ignores the method.
+  inspect: (route) => {
+    const match = router.lookup(route.path);
+    return match && { handler: undefined, params: match.params };
+  },
 };

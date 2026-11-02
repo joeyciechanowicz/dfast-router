@@ -17,13 +17,14 @@ export const routes = [
   { method: "GET", path: "/static/*" },
 ];
 
-// The URLs Hono's bench looks up, one per group.
+// The URLs Hono's bench looks up, one per group. `params` is ours, for check.mjs: the values a
+// router should capture. Only values, since routers name a wildcard differently.
 export const benchRoutes = [
-  { name: "short static", method: "GET", path: "/user" },
-  { name: "static with same radix", method: "GET", path: "/user/comments" },
-  { name: "dynamic route", method: "GET", path: "/user/lookup/username/hey" },
-  { name: "mixed static dynamic", method: "GET", path: "/event/abcd1234/comments" },
-  { name: "post", method: "POST", path: "/event/abcd1234/comment" },
-  { name: "long static", method: "GET", path: "/very/deeply/nested/route/hello/there" },
-  { name: "wildcard", method: "GET", path: "/static/index.html" },
+  { name: "short static", method: "GET", path: "/user", params: [] },
+  { name: "static with same radix", method: "GET", path: "/user/comments", params: [] },
+  { name: "dynamic route", method: "GET", path: "/user/lookup/username/hey", params: ["hey"] },
+  { name: "mixed static dynamic", method: "GET", path: "/event/abcd1234/comments", params: ["abcd1234"] },
+  { name: "post", method: "POST", path: "/event/abcd1234/comment", params: ["abcd1234"] },
+  { name: "long static", method: "GET", path: "/very/deeply/nested/route/hello/there", params: [] },
+  { name: "wildcard", method: "GET", path: "/static/index.html", params: ["index.html"] },
 ];

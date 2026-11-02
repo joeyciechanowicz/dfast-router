@@ -13,4 +13,5 @@ export const findMyWayRouter = {
   match: (route) => {
     router.find(route.method, route.path);
   },
+  inspect: (route) => router.find(route.method, route.path),
 };

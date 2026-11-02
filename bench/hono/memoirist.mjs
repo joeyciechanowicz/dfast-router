@@ -13,4 +13,8 @@ export const memoiristRouter = {
   match: (route) => {
     router.find(route.method, route.path);
   },
+  inspect: (route) => {
+    const match = router.find(route.method, route.path);
+    return match && { handler: match.store, params: match.params };
+  },
 };
