@@ -41,7 +41,7 @@ This repo uses an iterative, benchmark- and profiler-driven workflow. Every perf
 - `npm run bench:compare`
 - `npm run bench -- --routes specific` (pick a route set; the default is `generic`, and `bench:compare` takes it too)
 - `npm run bench:compare -- --time 1000 --runs 1`
-- `npm run bench:compare -- --fastest --read-params` (skips the previous commit, and fails unless dfast-router beats every other router; CI runs this on every corpus on each push to `main`)
+- `npm run bench:compare -- --fastest --read-params` (skips the previous commit, and fails unless dfast-router beats every other router; CI runs this on every corpus on each push to `main` and on every pull request)
 
 Scripts in this repo take flags, not environment variables. `bench/flags.mjs` reads them.
 
