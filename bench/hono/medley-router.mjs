@@ -15,4 +15,8 @@ export const medleyRouter = {
     const match = router.find(route.path);
     match.store[route.method]; // get handler
   },
+  inspect: (route) => {
+    const match = router.find(route.path);
+    return match && match.store[route.method] ? { handler: match.store[route.method], params: match.params } : null;
+  },
 };

@@ -18,4 +18,9 @@ export const koaRouter = {
   match: (route) => {
     router.match(route.path, route.method); // only matching
   },
+  // match() only finds layers. Params come later, from the layer, so they aren't checked.
+  inspect: (route) => {
+    const { pathAndMethod } = router.match(route.path, route.method);
+    return pathAndMethod.length === 0 ? null : { handler: pathAndMethod[0].stack[0], params: null };
+  },
 };

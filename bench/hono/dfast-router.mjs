@@ -29,3 +29,5 @@ export const dfastRouterUnread = {
   name: "dfast-router (params unread)",
   match: (route) => router.find(route.method, route.path),
 };
+
+dfastRouter.inspect = dfastRouterUnread.inspect = (route) => router.find(route.method, route.path);

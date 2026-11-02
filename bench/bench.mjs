@@ -1,4 +1,4 @@
-import { bench, measure, run } from "mitata";
+import { do_not_optimize, measure } from "mitata";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -87,9 +87,6 @@ const WARMUP_ROUNDS = 50000;
 const URL_SAMPLE_SIZE = 10;
 const HIT_SAMPLE_SIZE = 100_000;
 const HIT_RATE_TOLERANCE = 0.1;
-
-// `--read-params` stores here, because a read that nothing uses could be optimized away.
-let paramsSink = null;
 
 function normalizeLookupPath(path) {
   if (!path) return "/";
@@ -384,19 +381,21 @@ function createBenchLookup({ lookup, framework }) {
       const match = framework
         ? await lookup(method, path, getRequest(method, path))
         : await lookup(method, path);
-      if (readParams && match !== null) paramsSink = match.params;
+      do_not_optimize(readParams && match !== null ? match.params : match);
     };
   }
+  // Every result goes to do_not_optimize, because V8 can skip work on one that nothing reads. That
+  // includes the match itself when params go unread, or a router could skip building it.
   if (readParams) {
     return () => {
       const [method, path] = nextLookup();
       const match = lookup(method, path);
-      if (match !== null) paramsSink = match.params;
+      do_not_optimize(match !== null ? match.params : match);
     };
   }
   return () => {
     const [method, path] = nextLookup();
-    lookup(method, path);
+    do_not_optimize(lookup(method, path));
   };
 }
 
@@ -439,19 +438,8 @@ async function runBenchmarks() {
 
   const hitRates = measureHitRates(routers);
 
-  if (!jsonOutput) {
-    for (const [name, routerEntry] of routers) {
-      const benchLookup = createBenchLookup(routerEntry);
-      await warmUp(benchLookup);
-      bench(name, async function* () {
-        yield benchLookup;
-      });
-    }
-    // mitata colors by default, which would put escape codes in a pipe or a file.
-    await run({ format: "mitata", colors: process.stdout.isTTY === true });
-    return null;
-  }
-
+  // measure(), not bench() and run(), in both modes: only measure() takes `min_cpu_time`, so
+  // run() ignored `--time`.
   for (const [name, routerEntry] of routers) {
     const benchLookup = createBenchLookup(routerEntry);
     await warmUp(benchLookup);
@@ -508,10 +496,11 @@ async function report() {
         2,
       ),
     );
-  } else if (results) {
-    for (const result of results) {
+  } else {
+    for (const result of [...results].reverse()) {
+      const nsPerLookup = result.hz > 0 ? (1e9 / result.hz).toFixed(1) : "-";
       console.log(
-        `${result.name}: ${Math.round(result.hz).toLocaleString()} ops/sec (samples: ${result.samples}, rme: ${result.rme.toFixed(2)}%)`,
+        `${result.name}: ${nsPerLookup} ns/lookup, ${Math.round(result.hz).toLocaleString()} ops/sec (samples: ${result.samples}, rme: ${result.rme.toFixed(2)}%)`,
       );
     }
   }
