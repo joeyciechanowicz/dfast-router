@@ -247,6 +247,27 @@ What differs between the numbers:
 
 `find-my-way`'s code didn't change between comparison runs, and its numbers still moved by up to 5%, so treat these as approximate.
 
+### Against Hono
+
+Hono ships several routers, and these are called directly, without a Hono app. These are the same 34 routes, measured with `npm run bench:compare -- --read-params --fastest`, best of 3, with Hono 4.11. The machine wasn't idle, so treat these as approximate.
+
+| Traffic | Hit rate | dfast-router | TrieRouter | PatternRouter | vs Trie | vs Pattern |
+|---|---:|---:|---:|---:|---:|---:|
+| 34 routes, shuffled | 94.95% | 13.6M/s (74ns) | 437K/s (2,288ns) | 337K/s (2,969ns) | 31× | 40× |
+| Near-miss 404s | 16.92%, Pattern 33.25% | 18.2M/s (55ns) | 517K/s (1,935ns) | 350K/s (2,861ns) | 35× | 52× |
+| Query strings | 94.95% | 11.8M/s (85ns) | 429K/s (2,332ns) | 331K/s (3,025ns) | 27× | 36× |
+
+**RegExpRouter isn't in this table, because it can't hold these routes.** It throws `UnsupportedPathError` when a param sits beside a static segment, like `/a/:id` next to `/a/b`, even without param regexes. A default Hono app catches that and falls back to TrieRouter, so TrieRouter is what Hono runs for these routes. A test checks that RegExpRouter still refuses them. `npm run bench:hono` does run RegExpRouter, on Hono's own 12 routes.
+
+TrieRouter matched the reference exactly on all five corpora. PatternRouter did too, except on near-miss 404s: every pattern it builds allows a trailing slash, so `/items/1/` matches `/items/1`, and that accounts for every over-match in the 100,000 URLs sampled. `npm run test:consistency` compares route and params URL by URL: 0 mismatches on 2.7M lookups of the two route sets for each router. It counts PatternRouter's trailing-slash matches as misses. Unlike Express and `find-my-way`, neither router decodes params, so URLs containing `%` stay in.
+
+What differs between the numbers:
+
+- `match` finds every route that fits a URL, not just the first, because Hono's handlers run as a chain.
+- Neither number includes HTTP parsing, a response, or a Hono app's own request handling. An app cuts the query string before it calls the router, and the adapter does the same.
+- Both routers build params on every lookup.
+- PatternRouter tests every route on every lookup, so its cost grows with the table.
+
 ## Development
 
 - Build: `npm run build`

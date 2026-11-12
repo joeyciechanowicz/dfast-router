@@ -8,9 +8,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
+import { UnsupportedPathError } from 'hono/router';
+import { RegExpRouter } from 'hono/router/reg-exp-router';
 import { createExpress4, createExpress5 } from '../bench/express.mjs';
 import { createFindMyWay, createFindMyWayCompiled } from '../bench/find-my-way.mjs';
 import { takeSwitch } from '../bench/flags.mjs';
+import { createHonoPattern, createHonoSmart, createHonoTrie, toHonoPath } from '../bench/hono-routers.mjs';
 import { createReference } from '../bench/reference.mjs';
 import { methods, neverWin, routes as overlapRoutes, urls as overlapUrls } from './fixtures/routes-overlap.mjs';
 import { compare, countOverlaps, mutate } from './helpers/differential.mjs';
@@ -87,6 +90,11 @@ test('bench route set: specific', { skip: specificSkip }, async () => {
   await checkRouteSet(routes, precomputedUrls);
 });
 
+function matchesOneRoute(routes) {
+  const each = routes.map((route) => createReference([route]));
+  return ({ method, url }) => each.filter((reference) => reference(url, method) !== null).length <= 1;
+}
+
 function expressTarget(create, routes) {
   const { lookup } = create(routes);
   return (method, url) => {
@@ -104,9 +112,7 @@ function expressTarget(create, routes) {
 // - A URL that matches two routes, because Express takes the first registered and this router takes
 //   the highest ranked.
 async function checkExpress(create, routes, corpus) {
-  const each = routes.map((route) => createReference([route]));
-  const matchesOne = ({ method, url }) =>
-    each.filter((reference) => reference(url, method) !== null).length <= 1;
+  const matchesOne = matchesOneRoute(routes);
   const lookups = lookupsFor(corpus);
   const decoded = lookups.filter(({ url }) => url.includes('%')).length;
   const undecoded = lookups.filter(({ url }) => !url.includes('%'));
@@ -151,11 +157,46 @@ async function checkFindMyWay(create, routes, corpus) {
   assert.ok(result.hits > result.checked / 2, 'too few hits to mean anything');
 }
 
+// Hono's routers are held to the same reference, and neither decodes params. URLs matching two routes
+// are left out, because they take the first registered, as Express does. PatternRouter also differs
+// on a trailing slash: every pattern it builds allows one, so `/items/1/` matches `/items/1`. Where the
+// reference has no match, these count as misses, so one that beats a real match still fails.
+async function checkHono(create, routes, corpus, { allowsTrailingSlash = false } = {}) {
+  const { lookup } = create(routes);
+  const reference = createReference(routes);
+  let trailingSlashes = 0;
+  const find = (method, url) => {
+    const match = lookup(method, url[0] === '/' ? url : `/${url}`);
+    if (match === null) return null;
+    if (allowsTrailingSlash && url.split('?')[0].endsWith('/') && reference(url, method) === null) {
+      trailingSlashes += 1;
+      return null;
+    }
+    return { route: match.route, params: { ...match.params } };
+  };
+
+  const lookups = lookupsFor(corpus);
+  const comparable = lookups.filter(matchesOneRoute(routes));
+  const result = compare(find, routes, comparable);
+  console.log(
+    `checked ${result.checked}, ${result.hits} hits, ${result.mismatches.length} mismatches, ` +
+      `left out ${lookups.length - comparable.length} matching two routes, ${trailingSlashes} matched a trailing slash`,
+  );
+  assertAgrees(result);
+  assert.ok(result.hits > result.checked / 2, 'too few hits to mean anything');
+}
+
+const checkHonoPattern = (create, routes, corpus) =>
+  checkHono(create, routes, corpus, { allowsTrailingSlash: true });
+
 const frameworks = [
   ['express@4', createExpress4, checkExpress],
   ['express@5', createExpress5, checkExpress],
   ['find-my-way', createFindMyWay, checkFindMyWay],
   ['find-my-way-compiled', createFindMyWayCompiled, checkFindMyWay],
+  ['hono-smart', createHonoSmart, checkHono],
+  ['hono-trie', createHonoTrie, checkHono],
+  ['hono-pattern', createHonoPattern, checkHonoPattern],
 ];
 const frameworkSkip = PROTOTYPE ? 'this checks the frameworks, not the prototype' : false;
 
@@ -171,6 +212,45 @@ for (const [name, create, check] of frameworks) {
     await check(create, routes, precomputedUrls);
   });
 }
+
+// bench/hono-routers.mjs has no RegExpRouter entry for this reason. If this fails, it can have one.
+test('Hono RegExpRouter refuses the generic bench routes', { skip: frameworkSkip }, async () => {
+  const { routes } = await import('../bench/routes-generic.mjs');
+  const router = new RegExpRouter();
+  for (const path of routes.flatMap((route) => route.concretePaths)) {
+    router.add('GET', toHonoPath(path), path);
+  }
+  assert.throws(() => router.match('GET', '/'), UnsupportedPathError);
+});
+
+test('hono-smart runs TrieRouter on the generic bench routes', { skip: frameworkSkip }, async () => {
+  const { routes } = await import('../bench/routes-generic.mjs');
+  assert.equal(createHonoSmart(routes).activeRouter, 'TrieRouter');
+});
+
+test('hono-smart runs TrieRouter on the specific bench routes', { skip: frameworkSkip || specificSkip }, async () => {
+  const { routes } = await import(specificRoutes.href);
+  assert.equal(createHonoSmart(routes).activeRouter, 'TrieRouter');
+});
+
+// No bench route set reaches RegExpRouter, so this is what covers its params, which it returns as
+// indexes into the regex match rather than as values.
+test('hono-smart reads params when it runs RegExpRouter', { skip: frameworkSkip }, () => {
+  const routes = ['/user', '/user/lookup/:name', '/event/:id/comments/:comment', '/map/:place/events'].map(
+    (path) => ({ path, concretePaths: [path] }),
+  );
+  const { lookup, activeRouter } = createHonoSmart(routes);
+  assert.equal(activeRouter, 'RegExpRouter');
+
+  const urls = ['/user', '/user/lookup/ada', '/event/7/comments/9', '/map/leeds/events?a=1', '/nope', '/user/'];
+  const find = (method, url) => {
+    const match = lookup(method, url);
+    return match === null ? null : { route: match.route, params: match.params };
+  };
+  const { mismatches, hits } = compare(find, routes, urls.map((url) => ({ method: 'GET', url })));
+  assert.deepEqual(mismatches, []);
+  assert.equal(hits, 4);
+});
 
 test('overlapping route set', { skip: PROTOTYPE ? 'the prototype uses registration order' : false }, async () => {
   const find = await routerTarget(overlapRoutes);
